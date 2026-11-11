@@ -2,12 +2,80 @@
 Creación y navegación de proyectos en Google Flow.
 """
 import re
+import json
 from pathlib import Path
 
 from .browser import get_page, SEL_SETTINGS_TRIGGER
+from . import settings
 
-FLOW_BASE_URL = "https://labs.google/fx/es-419/tools/flow"
-NEW_PROJECT_BUTTON = re.compile(r"Proyecto nuevo|Nuevo proyecto|New project", re.I)
+FLOW_BASE_URL = "https://flow.google.com/"
+NEW_PROJECT_BUTTON = re.compile(r"Proyecto nuevo|Nuevo proyecto|New project|Novo projeto", re.I)
+# Marcador del ultimo proyecto creado (session/last_project.json) para reutilizarlo.
+PROJECT_MARKER = Path(settings.FLOW_CHROME_PROFILE).parent / "last_project.json"
+
+
+def _load_last_project() -> tuple[str | None, str | None]:
+    try:
+        d = json.loads(PROJECT_MARKER.read_text(encoding="utf-8"))
+        return d.get("uuid"), d.get("url")
+    except Exception:
+        return None, None
+
+
+def _save_last_project(uuid: str, url: str) -> None:
+    try:
+        PROJECT_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        PROJECT_MARKER.write_text(json.dumps({"uuid": uuid, "url": url}), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _clear_last_project() -> None:
+    try:
+        PROJECT_MARKER.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+async def _current_project_uuid(page) -> str | None:
+    m = re.search(r"/project/([A-Za-z0-9_-]+)", page.url or "")
+    return m.group(1) if m else None
+
+
+async def ensure_project(force_new: bool = False) -> tuple[str, str]:
+    """Reutiliza el proyecto ya abierto o el ultimo creado; solo crea uno nuevo
+    si no hay ninguno o si force_new=True. Evita acumular proyectos en Flow."""
+    page = await get_page()
+    if not force_new:
+        uuid = await _current_project_uuid(page)
+        if uuid:
+            _save_last_project(uuid, page.url)
+            return uuid, page.url
+        # ¿Hay un proyecto abierto en otra pestana del mismo Chrome?
+        from . import browser
+        if browser._context:
+            for p in list(browser._context.pages):
+                try:
+                    if p.is_closed():
+                        continue
+                    u = await _current_project_uuid(p)
+                    if u:
+                        browser._page = p
+                        _save_last_project(u, p.url)
+                        return u, p.url
+                except Exception:
+                    continue
+        # ¿Conocemos un ultimo proyecto persistente?
+        last_uuid, _ = _load_last_project()
+        if last_uuid:
+            try:
+                await navigate_to_project(last_uuid)
+                return last_uuid, page.url
+            except Exception:
+                _clear_last_project()  # el proyecto ya no existe: crear uno nuevo
+    uuid, url = await create_project()
+    _save_last_project(uuid, url)
+    return uuid, url
 
 async def _dismiss_fullscreen_viewer(page) -> None:
     """Presiona Escape para cerrar cualquier visor/lightbox que se haya abierto accidentalmente."""
@@ -23,11 +91,17 @@ PANEL_OVERLAY = '[role="dialog"], [aria-modal="true"]'
 
 async def _await_user_dismisses_panel(page, seconds: int = 15) -> None:
     """Si Flow muestra un panel de novedades o anuncio encima de la interfaz,
-    avisa y da unos segundos para que el usuario lo cierre a mano en la ventana.
+    intenta cerrarlo automáticamente o espera."""
+    # Primero intentar cerrar con botones comunes como Começar, Entendido, etc.
+    try:
+        dismiss_btn = page.get_by_role("button", name=re.compile(r"Começar|Comenzar|Entendido|Got it|Dismiss", re.I)).first
+        if await dismiss_btn.count() > 0 and await dismiss_btn.is_visible():
+            await dismiss_btn.click()
+            await page.wait_for_timeout(1000)
+            return
+    except Exception:
+        pass
 
-    No se cierra automáticamente: el diseño del panel cambia cada vez y su botón
-    ('Comenzar', 'Entendido', una X...) no es predecible. Si sigue abierto al
-    vencer el plazo continúa igual — esto nunca aborta la corrida."""
     panel = page.locator(PANEL_OVERLAY).first
     try:
         await panel.wait_for(state="visible", timeout=3_000)
@@ -35,7 +109,11 @@ async def _await_user_dismisses_panel(page, seconds: int = 15) -> None:
         return  # No apareció: entrada normal.
 
     print("\n>>> Google Flow muestra un panel o anuncio sobre la interfaz.")
-    print(f">>> Ciérralo en la ventana de Chrome. Espero {seconds}s y sigo igual.\n")
+    try:
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(1000)
+    except Exception:
+        pass
     try:
         await panel.wait_for(state="hidden", timeout=seconds * 1_000)
         print(">>> Panel cerrado. Continuando.\n")
@@ -52,7 +130,7 @@ async def ensure_all_media_tab(page) -> None:
     """
     try:
         # El botón tiene un ícono google-symbols "dashboard" y el texto accesible oculto
-        all_media_btn = page.locator('button:has(i:text-is("dashboard"))')
+        all_media_btn = page.locator('button:has(:is(i, mat-icon):text-is("dashboard")), button:has-text("Todas as mídias"), button:has-text("Todo el contenido multimedia")')
         
         if await all_media_btn.count() > 0 and await all_media_btn.first.is_visible():
             await all_media_btn.first.click()
@@ -63,7 +141,7 @@ async def ensure_all_media_tab(page) -> None:
 
 async def _wait_for_settings(page) -> None:
     try:
-        await page.locator(SEL_SETTINGS_TRIGGER).first.wait_for(state="visible", timeout=15_000)
+        await page.locator('flow-rich-text-editor, div.ProseMirror, flow-base-prompt-box, button:has(:is(i, mat-icon):text-is("tune"))').first.wait_for(state="visible", timeout=15_000)
     except Exception:
         debug_dir = Path(__file__).resolve().parent.parent / "scratch"
         debug_dir.mkdir(exist_ok=True)
@@ -101,7 +179,7 @@ async def create_project() -> tuple[str, str]:
     await _wait_for_settings(page)
 
     await _dismiss_fullscreen_viewer(page)
-    await ensure_all_media_tab(page)
+    # No clicar em ensure_all_media_tab ao criar projeto para manter o foco na caixa de prompt
     return project_uuid, project_url
 
 

@@ -9,10 +9,13 @@ from .browser import (
     shutdown,
     get_page,
     get_lock,
+    launch_detached_chrome,
+    _cdp_up as cdp_up,
 )
 from .project import (
     create_project,
     navigate_to_project,
+    ensure_project,
 )
 from .configure import (
     select_image_mode,
@@ -32,7 +35,8 @@ from .download import download_latest
 
 __all__ = [
     "startup", "shutdown", "get_page", "get_lock",
-    "create_project", "navigate_to_project",
+    "launch_detached_chrome", "cdp_up",
+    "create_project", "navigate_to_project", "ensure_project",
     "select_ingredients_by_name", "select_frame_from_project",
     "upload_frame", "get_canvas_count", "capture_newest_asset_name",
     "submit_prompt",

@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Módulo de Narração & Entonação - Floww Studio</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card: #131b2e;
+      --card-border: #233152;
+      --primary: #38bdf8;
+      --accent: #22c55e;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 16px;
+      display: flex;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .container {
+      width: 100%;
+      max-width: 520px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .header-card {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 18px;
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #fff;
+    }
+    p.subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+
+    .notice-box {
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      border-radius: 12px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .notice-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #38bdf8;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .notice-desc {
+      font-size: 12px;
+      color: #cbd5e1;
+      line-height: 1.5;
+    }
+    .btn-open-chrome {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      color: #fff;
+      text-decoration: none;
+      padding: 12px 16px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 700;
+      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.4);
+      cursor: pointer;
+      border: none;
+    }
+    .btn-open-chrome:active {
+      transform: scale(0.98);
+      filter: brightness(1.1);
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      display: block;
+      margin-bottom: 6px;
+    }
+    textarea {
+      width: 100%;
+      height: 110px;
+      background: #090e1a;
+      border: 1px solid #233152;
+      border-radius: 10px;
+      color: #fff;
+      padding: 12px;
+      font-size: 14px;
+      font-family: inherit;
+      resize: vertical;
+      outline: none;
+    }
+    textarea:focus {
+      border-color: var(--primary);
+    }
+
+    .profile-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .profile-btn {
+      background: #0d1527;
+      border: 1px solid #233152;
+      border-radius: 10px;
+      padding: 12px 6px;
+      color: #cbd5e1;
+      font-size: 12px;
+      font-weight: 700;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .profile-btn.active {
+      background: rgba(56, 189, 248, 0.15);
+      border-color: var(--primary);
+      color: #fff;
+    }
+    .profile-btn span.emoji {
+      font-size: 20px;
+    }
+
+    .slider-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .slider-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .slider-header span.val {
+      color: var(--primary);
+      font-family: monospace;
+    }
+    input[type=range] {
+      width: 100%;
+      height: 6px;
+      background: #233152;
+      border-radius: 3px;
+      outline: none;
+      -webkit-appearance: none;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--primary);
+      cursor: pointer;
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 10px;
+      margin-top: 6px;
+    }
+    .btn-action {
+      flex: 1;
+      padding: 14px;
+      border-radius: 12px;
+      border: none;
+      font-size: 14px;
+      font-weight: 800;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .btn-play {
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);
+    }
+    .btn-stop {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #ef4444;
+    }
+
+    .status-badge {
+      font-size: 12px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: #090e1a;
+      border: 1px solid #233152;
+      color: #cbd5e1;
+      text-align: center;
+    }
+    .url-chip {
+      background: #000;
+      color: #38bdf8;
+      font-family: monospace;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header-card">
+      <h1>🎙️ Voice Narrator (pt-BR)</h1>
+      <p class="subtitle">Controle total de entonação, perfil de idade, ritmo e sintetização de voz em português.</p>
+    </div>
+
+    <!-- Card de Alerta Informativo e Botão para Abrir no Chrome -->
+    <div class="notice-box" id="webview-alert">
+      <div class="notice-title">
+        <span>🌐 Onde ouvir a voz humana real?</span>
+      </div>
+      <div class="notice-desc">
+        O preview interno da IDE roda em uma WebView do Android que, por segurança do sistema, não tem acesso ao sintetizador de voz do Google.
+        <br><br>
+        <strong>No Chrome do seu celular, ele funciona com 100% de clareza e fidelidade!</strong>
+      </div>
+      <a id="btn-open-external" class="btn-open-chrome" href="#" target="_blank">
+        🚀 Abrir no Chrome do Celular
+      </a>
+      <div style="font-size: 11px; color: #94a3b8;">Ou copie e cole no seu Chrome:</div>
+      <div class="url-chip" id="local-url-display">Carregando endereço...</div>
+    </div>
+
+    <div class="card">
+      <div>
+        <label>Texto da Locução / Roteiro Comercial</label>
+        <textarea id="narrator-text">Atenção empreendedores! Conheça agora a nova solução digital que vai transformar e acelerar suas vendas direto pelo seu celular. Aumente seu faturamento e conquiste novos clientes todos os dias!</textarea>
+      </div>
+
+      <div>
+        <label>Perfil de Idade & Entonação</label>
+        <div class="profile-grid">
+          <button class="profile-btn active" data-profile="adult_professional" onclick="selectProfile('adult_professional')">
+            <span class="emoji">👔</span>
+            <span>Adulto</span>
+            <small style="font-size: 10px; color: #94a3b8;">Profissional</small>
+          </button>
+          <button class="profile-btn" data-profile="young_energetic" onclick="selectProfile('young_energetic')">
+            <span class="emoji">⚡</span>
+            <span>Jovem</span>
+            <small style="font-size: 10px; color: #94a3b8;">Reels / Shorts</small>
+          </button>
+          <button class="profile-btn" data-profile="mature_broadcaster" onclick="selectProfile('mature_broadcaster')">
+            <span class="emoji">🎙️</span>
+            <span>Maduro</span>
+            <small style="font-size: 10px; color: #94a3b8;">Radialista</small>
+          </button>
+        </div>
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-header">
+          <span>Entonação (Pitch)</span>
+          <span class="val" id="pitch-val">0.90x (Firme)</span>
+        </div>
+        <input type="range" id="pitch-slider" min="0.5" max="1.7" step="0.05" value="0.90" oninput="updateSliders()">
+        <small style="font-size: 11px; color: #64748b; display: flex; justify-content: space-between;">
+          <span>← Mais Grave (Maduro)</span>
+          <span>Mais Agudo (Jovem) →</span>
+        </small>
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-header">
+          <span>Velocidade de Fala (Tempo)</span>
+          <span class="val" id="rate-val">1.05x</span>
+        </div>
+        <input type="range" id="rate-slider" min="0.6" max="1.6" step="0.05" value="1.05" oninput="updateSliders()">
+        <small style="font-size: 11px; color: #64748b; display: flex; justify-content: space-between;">
+          <span>← Calmo</span>
+          <span>Dinâmico →</span>
+        </small>
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-header">
+          <span>Volume</span>
+          <span class="val" id="volume-val">100%</span>
+        </div>
+        <input type="range" id="volume-slider" min="0.1" max="1.0" step="0.05" value="1.0" oninput="updateSliders()">
+      </div>
+
+      <div class="btn-group">
+        <button class="btn-action btn-play" id="btn-play" onclick="playNarration()">
+          🔊 Falar Agora
+        </button>
+        <button class="btn-action btn-stop" id="btn-stop" onclick="stopNarration()">
+          ⏹️ Parar
+        </button>
+      </div>
+
+      <div class="status-badge" id="status-badge">
+        Pronto para narrar
+      </div>
+    </div>
+  </div>
+
+  <script src="voice-narrator.js"></script>
+  <script>
+    const narrator = new VoiceNarrator({
+      onStart: () => {
+        document.getElementById('status-badge').textContent = '▶️ Narrando áudio...';
+        document.getElementById('status-badge').style.borderColor = '#10b981';
+      },
+      onEnd: () => {
+        document.getElementById('status-badge').textContent = '✅ Narração concluída com sucesso!';
+        document.getElementById('status-badge').style.borderColor = '#233152';
+      },
+      onError: (err) => {
+        if (err && err.isWebView) {
+          document.getElementById('status-badge').textContent = '⚠️ Abra no Chrome (botão acima) para ouvir!';
+          document.getElementById('status-badge').style.borderColor = '#38bdf8';
+        } else {
+          document.getElementById('status-badge').textContent = '⚠️ Erro ao reproduzir narração.';
+        }
+      }
+    });
+
+    // Configurar URL para abrir no Chrome externo (suporta intent no Android e fallback direto)
+    const currentUrl = window.location.href;
+    document.getElementById('local-url-display').textContent = currentUrl;
+    
+    // Gera URL de intent oficial do Android para chamar o Chrome diretamente
+    const cleanUrl = currentUrl.replace(/^https?:\/\//, '');
+    const intentChromeUrl = `intent://${cleanUrl}#Intent;scheme=http;package=com.android.chrome;end`;
+    
+    const btnOpen = document.getElementById('btn-open-external');
+    btnOpen.href = currentUrl;
+    btnOpen.onclick = (e) => {
+      // Tenta acionar a intent do Chrome nativo se estiver no Android
+      try {
+        window.location.href = intentChromeUrl;
+        setTimeout(() => {
+          window.open(currentUrl, '_blank');
+        }, 300);
+        e.preventDefault();
+      } catch(err) {
+        // fallback normal de link
+      }
+    };
+
+    if (narrator.isSpeechSynthesisSupported()) {
+      document.getElementById('webview-alert').style.borderColor = 'rgba(34, 197, 94, 0.4)';
+      document.getElementById('webview-alert').style.background = 'rgba(34, 197, 94, 0.08)';
+      document.getElementById('webview-alert').querySelector('.notice-title').textContent = '✅ Motor de Voz Humana Nativo Ativo!';
+      document.getElementById('webview-alert').querySelector('.notice-desc').innerHTML = 'Seu navegador suporta a síntese de voz humana com máxima fidelidade e clareza!';
+    }
+
+    function selectProfile(profileKey) {
+      document.querySelectorAll('.profile-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-profile') === profileKey);
+      });
+      const p = narrator.profiles[profileKey];
+      if (p) {
+        document.getElementById('pitch-slider').value = p.pitch;
+        document.getElementById('rate-slider').value = p.rate;
+        updateSliders();
+      }
+    }
+
+    function updateSliders() {
+      const pitch = parseFloat(document.getElementById('pitch-slider').value);
+      const rate = parseFloat(document.getElementById('rate-slider').value);
+      const vol = parseFloat(document.getElementById('volume-slider').value);
+
+      let pitchDesc = '';
+      if (pitch <= 0.75) pitchDesc = ' (Muito Grave)';
+      else if (pitch <= 0.95) pitchDesc = ' (Firme/Adulto)';
+      else if (pitch <= 1.15) pitchDesc = ' (Natural)';
+      else pitchDesc = ' (Agudo/Jovem)';
+
+      document.getElementById('pitch-val').textContent = pitch.toFixed(2) + 'x' + pitchDesc;
+      document.getElementById('rate-val').textContent = rate.toFixed(2) + 'x';
+      document.getElementById('volume-val').textContent = Math.round(vol * 100) + '%';
+    }
+
+    function playNarration() {
+      const text = document.getElementById('narrator-text').value;
+      const pitch = parseFloat(document.getElementById('pitch-slider').value);
+      const rate = parseFloat(document.getElementById('rate-slider').value);
+      const volume = parseFloat(document.getElementById('volume-slider').value);
+
+      narrator.speak(text, {
+        pitch: pitch,
+        rate: rate,
+        volume: volume
+      });
+    }
+
+    function stopNarration() {
+      narrator.stop();
+      document.getElementById('status-badge').textContent = '⏹️ Narração interrompida.';
+    }
+
+    updateSliders();
+  </script>
+</body>
+</html>

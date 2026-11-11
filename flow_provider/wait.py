@@ -15,10 +15,10 @@ import time
 
 from .browser import get_page
 
-SEL_RESULT_IMAGE = 'flow-image-tile img.image, flow-image-tile img, img.image, img[alt*="Tarjeta que muestra la imagen" i], img[alt="Imagen generada"]'
-SEL_RESULT_VIDEO = 'flow-video-tile video, flow-video-tile img, img[alt*="video" i], img[alt="Miniatura de video"]'
+SEL_RESULT_IMAGE = 'flow-image-tile img, img.image, img[alt*="imagem" i], img[alt*="imagen" i], img[alt*="image" i], img'
+SEL_RESULT_VIDEO = 'flow-video-tile video, video, flow-video-tile img, img[alt*="video" i]'
 SEL_RESULT_CARD  = 'flow-grid-tile-container, flow-tile-container, [aria-roledescription="draggable"]'
-SEL_MORE_MENU    = 'button[aria-label="Más opciones"], button:has(:is(i, mat-icon):text-is("more_vert"))'
+SEL_MORE_MENU    = 'button[aria-label="Más opciones"], button[aria-label="Mais opções"], button[aria-label*="opç" i], button:has(:is(i, mat-icon):text-is("more_vert"))'
 
 # Selectores de error de generación — usar texto literal para evitar falsos positivos
 # con cards de loading que también tienen data-tile-id
@@ -34,7 +34,7 @@ _REUSE_RE = re.compile(
 #   refresh        -> "Reintentar"
 #   undo           -> "Reutilizar instrucción"   <- el que sirve
 #   delete_forever -> "Borrar"
-_REUSE_ICON = 'button:has(i:text-is("undo"))'
+_REUSE_ICON = 'button:has(:is(i, mat-icon):text-is("undo"))'
 
 
 async def error_card_count(page) -> int:
@@ -46,6 +46,73 @@ async def error_card_count(page) -> int:
     generación tuviera nada malo.
     """
     return await page.locator(SEL_ERROR_TEXT).count()
+
+
+# Confirmación primaria que suele acompañar a la opción "Sempre aprovar".
+_APPROVE_CONFIRM_RE = re.compile(
+    r"(Aprovar|Confirmar|Continuar|Avan[çc]ar|Gerar|Permitir|Allow|Approve|"
+    r"Confirm|Continue|Next|Generate|Ir\b)", re.IGNORECASE
+)
+
+
+async def _auto_approve(page) -> bool:
+    """Resuelve el diálogo de créditos/aprobación de Flow sin intervención humana.
+
+    Conservador por seguridad: sólo actúa ante controles de aprobación reales.
+    (1) marcar la opción visible "Sempre aprovar"; (2) si hay un modal DE VERDAD
+    ([aria-modal=true]) cuyo texto menciona créditos/aprobación, pulsar su botón
+    primario. Nunca pulsa Enter a ciegas ni hace clic fuera de un modal de
+    aprobación, porque Flow mantiene overlays abiertos y eso reenviaría prompts.
+    Retorna True sólo si actuó sobre una aprobación genuina.
+    """
+    acted = False
+
+    # 1) Marcar "Sempre aprovar" si está visible (autorización permanente).
+    try:
+        always = page.locator(
+            "div.option-row:has-text('Sempre aprovar'), "
+            "[role='radio'][aria-label*='Sempre aprovar'], "
+            "button:has-text('Sempre aprovar'), "
+            "label:has-text('Sempre aprovar')"
+        )
+        for i in range(min(await always.count(), 3)):
+            el = always.nth(i)
+            if await el.is_visible():
+                await el.click(force=True)
+                acted = True
+                await asyncio.sleep(0.6)
+                break
+    except Exception:
+        pass
+
+    # 2) Modal real que menciona crédito/aprobación -> pulsar su botón primario.
+    try:
+        modal = page.locator('[aria-modal="true"][role="dialog"], [role="dialog"][aria-modal="true"]')
+        n = await modal.count()
+        for k in range(min(n, 4)):
+            m = modal.nth(k)
+            if not await m.is_visible():
+                continue
+            try:
+                txt = (await m.inner_text() or "").lower()
+            except Exception:
+                continue
+            if not any(w in txt for w in ("crédito", "credito", "credit", "aprovar",
+                                          "aprovac", "allow", "approve", "gerar")):
+                continue
+            btns = m.locator("button, [role='button']").filter(has_text=_APPROVE_CONFIRM_RE)
+            for j in range(await btns.count()):
+                b = btns.nth(j)
+                if await b.is_visible():
+                    await b.click(force=True)
+                    acted = True
+                    await asyncio.sleep(0.8)
+                    break
+            break
+    except Exception:
+        pass
+
+    return acted
 
 
 async def _reuse_instruction_and_resend(page, attempt: int = 0) -> bool:
@@ -156,7 +223,7 @@ async def _poll_until_ready(page, media_sel: str, pre_cards, pre_errors: int, ti
                 if (video) {{
                     const src = video.getAttribute('src') || video.currentSrc || video.src || '';
                     const aria = (video.getAttribute('aria-label') || '').toLowerCase();
-                    if ((src.startsWith('http') && src.length > 40) || (src.startsWith('blob:') && src.length > 50) || aria.includes('generado')) {{
+                    if ((src.startsWith('http') && src.length > 40) || (src.startsWith('blob:') && src.length > 50) || aria.includes('generado') || aria.includes('gerado') || aria.includes('generated')) {{
                         return {{ ready: true, detail: "video_src" }};
                     }}
                     if (video.readyState >= 2 && !video.paused) {{
@@ -193,7 +260,7 @@ async def _poll_until_ready(page, media_sel: str, pre_cards, pre_errors: int, ti
                 for (const b of buttons) {{
                     const aria = (b.getAttribute('aria-label') || '').toLowerCase();
                     const text = (b.innerText || '').toLowerCase();
-                    if (aria.includes('más') || aria.includes('options') || text.includes('more_vert')) {{
+                    if (aria.includes('más') || aria.includes('mais') || aria.includes('options') || aria.includes('opç') || text.includes('more_vert')) {{
                         return {{ ready: true, detail: "toolbar_presente" }};
                     }}
                 }}
@@ -210,6 +277,14 @@ async def _poll_until_ready(page, media_sel: str, pre_cards, pre_errors: int, ti
 
     while time.monotonic() < deadline:
         elapsed = int(time.monotonic() - start)
+
+        # Manejo automático de confirmación de créditos / aprobación en Flow.
+        try:
+            if await _auto_approve(page):
+                print("    [wait] Aprobacion automatica de generacion (creditos) resuelta.")
+                await asyncio.sleep(0.8)
+        except Exception:
+            pass
 
         # Un video de Flow NUNCA está listo en menos de 15 segundos
         if is_video and elapsed < 15:

@@ -9,6 +9,7 @@ Funciona con Claude Code, Codex, OpenCode u otros agentes **cuando se ejecutan e
 - Imagen desde texto o con referencia local.
 - Video desde texto, fotograma inicial o fotogramas inicial y final.
 - Lotes ordenados de imágenes y videos, con encadenamiento imagen → video.
+- **Video corto narrado de duración libre** (`short`): clips de ~10s encadenados, narración pt-BR, subtítulos quemados y exportación 360p.
 - Selección de modelo, formato y duración de video compatible con Flow.
 - Descarga automática a `outputs/` y reporte `batch_report.json`.
 
@@ -38,6 +39,42 @@ python flow.py batch examples/lote_imagenes.json
 
 Para lotes, el agente debe escribir el JSON y ejecutar `batch`; tú no tienes que copiar prompts uno por uno. Los resultados quedan en `outputs/<project>/`. Revisa el reporte del lote para ver éxitos y errores.
 
+## Video narrado (pipeline `short`)
+
+Para un video de la duración que pidas (ej. 30s, 2min) con **narración en portugués, subtítulos y 360p**, escribe un roteiro y ejecuta:
+
+```powershell
+python flow.py short examples/roteiro_casa_praia.json
+```
+
+El pipeline genera clips de ~10s con **Omni 1.1 Flash** (tantos como haga falta para cubrir el alvo, encadenados por el último cuadro para no cortar), narra con **edge-tts** (voz `pt-BR-AntonioNeural`, alternativa `pt-BR-FranciscaNeural`) y monta con **ffmpeg** (concat + mezcla de audio + subtítulos + escala 640x360). Resultado: `outputs/<title>/<title>_360p.mp4`.
+
+### Portabilidad y voces
+
+- El **ffmpeg viaja dentro del proyecto** en `vendor/bin/ffmpeg.exe` (offline, sin instalar nada en otro PC). Se prepara con `python setup.py`.
+- Las voces Antonio/Francisca son del servicio online edge-tts: la **primera** vez que se sintetiza un texto nuevo se necesita internet; el audio queda **cacheado** en `vendor/voices/cache/` y las repeticiones funcionan offline.
+- Cada clip consume créditos de Flow; `short` informa cuántos clips hará antes de empezar.
+
+---
+
+## 🎬 Floww Studio — Editor & Montagem 3D em Tempo Real (`video_editor.html`)
+
+O repositório inclui um **estúdio completo e autônomo** para visualização, animação 3D, narração e exportação de vídeos verticais (9:16 Shorts/Reels/TikTok) diretamente no navegador, sem dependências externas pesadas:
+
+- **Arquivo Principal**: `video_editor.html` (aberto localmente no navegador ou Webview).
+- **Projetos Integrados**:
+  - `A Bolha e o Xadrez Mental` (`assets/projetos/xadrez_bolha/`): cenas 3D com personagens reflexivos, tabuleiros, peças físicas e animação procedural.
+  - `Odisseia do Steve` (`assets/projetos/steve_minecraft/`): Steve procedural, ciclos de dia/noite com iluminação pontual de tocha, cabana de carvalho e castelo medieval.
+- **Áudio & Narração**: Web Audio API com pré-carregamento instantâneo, controle de silenciamento (`🔊`/`🔇`) durante exportação e sincronização precisa de legendas dinâmicas.
+- **Controles de UI Interativos**:
+  - Arrasto vertical com toque/mouse diretamente no canvas para o **balão do título** e para as **legendas**.
+  - Sliders manuais de porcentagem para posicionamento em zonas seguras de redes sociais (Safe Zones de Reels/TikTok).
+- **Exportação Estável**: Renderização com `MediaRecorder` em formato WebM (VP8/Opus) preservando áudio integral e salvando em `assets/projetos/<slug>/videos/`.
+
+### Guardião de contenido
+
+Cuando Flow bloquea un prompt, `flow_provider/policy_guard.py` propone una **reescrita legítima dentro de la política** y pide tu aprobación; nunca reenvía solo ni intenta burlar la moderación con pretextos.
+
 ## Preguntas frecuentes
 
 **¿Crea imágenes por lotes?** Sí. Cada entrada `image` del JSON genera y descarga una imagen. Puedes mezclar imágenes y videos en el mismo lote.
@@ -55,7 +92,8 @@ Para lotes, el agente debe escribir el JSON y ejecutar `batch`; tú no tienes qu
 - `flow.py`: CLI pública.
 - `SKILL.md`: instrucciones para el agente.
 - `flow_provider/`: automatización interna de Flow.
-- `examples/`: lotes de ejemplo.
+- `examples/`: lotes y roteiros de ejemplo.
+- `vendor/`: ffmpeg embebido y cache de voces para el pipeline `short` (portable).
 - `session/`: perfil privado de Chrome, excluido de Git.
 - `outputs/`: descargas locales, excluidas de Git.
 

@@ -1,0 +1,90 @@
+{
+  "titulo": "A Jornada de Steve no Minecraft",
+  "formato": "9:16",
+  "resolucao": {
+    "largura": 1080,
+    "altura": 1920
+  },
+  "fps": 30,
+  "trilha_sonora": {
+    "estilo": "aventura_suave_minecraft",
+    "volume": 0.18
+  },
+  "cenas": [
+    {
+      "ordem": 1,
+      "titulo": "Despertar Cúbico",
+      "duracao_segundos": 10.0,
+      "audio_arquivo": "assets/projetos/steve_minecraft/audios/steve_cena1.mp3",
+      "texto_narracao": "Em um mundo feito de blocos infinitos, cada amanhecer traz um novo recomeço. O silêncio da manhã esconde segredos ancestrais.",
+      "animacao_tipo": "olhar_redor",
+      "camera": {
+        "tipo": "orbital_3_4",
+        "fov": 45,
+        "posicao_inicial": [-1.8, 1.4, 3.2],
+        "posicao_final": [-1.2, 1.2, 2.6],
+        "alvo": [0, 0.9, 0]
+      }
+    },
+    {
+      "ordem": 2,
+      "titulo": "Primeiros Recursos",
+      "duracao_segundos": 14.0,
+      "audio_arquivo": "assets/projetos/steve_minecraft/audios/steve_cena2.mp3",
+      "texto_narracao": "A madeira é a chave da sobrevivência. Golpe a golpe, o tronco cede, revelando a matéria-prima de todas as ferramentas.",
+      "animacao_tipo": "cortar_arvore",
+      "camera": {
+        "tipo": "dinamica_diagonal",
+        "fov": 48,
+        "posicao_inicial": [2.2, 1.6, 2.8],
+        "posicao_final": [1.6, 1.1, 2.2],
+        "alvo": [0, 0.8, 0]
+      }
+    },
+    {
+      "ordem": 3,
+      "titulo": "A Primeira Noite",
+      "duracao_segundos": 13.0,
+      "audio_arquivo": "assets/projetos/steve_minecraft/audios/steve_cena3.mp3",
+      "texto_narracao": "O sol se põe e as sombras ganham vida. Apenas a luz da tocha mantém os monstros à distância na escuridão profunda.",
+      "animacao_tipo": "empunhar_tocha",
+      "camera": {
+        "tipo": "contra_plongee_sombrio",
+        "fov": 50,
+        "posicao_inicial": [1.4, 0.4, 2.5],
+        "posicao_final": [1.0, 0.8, 2.0],
+        "alvo": [0, 1.0, 0]
+      }
+    },
+    {
+      "ordem": 4,
+      "titulo": "Minério Precioso",
+      "duracao_segundos": 14.0,
+      "audio_arquivo": "assets/projetos/steve_minecraft/audios/steve_cena4.mp3",
+      "texto_narracao": "Nas profundezas das cavernas, onde a lava ilumina a rocha, o brilho azul do diamante recompensa o minerador corajoso.",
+      "animacao_tipo": "minerar_diamante",
+      "camera": {
+        "tipo": "aproximacao_epica",
+        "fov": 42,
+        "posicao_inicial": [0.0, 1.8, 3.6],
+        "posicao_final": [0.0, 1.0, 2.1],
+        "alvo": [0, 0.7, 0]
+      }
+    },
+    {
+      "ordem": 5,
+      "titulo": "O Legado Infinito",
+      "duracao_segundos": 14.0,
+      "audio_arquivo": "assets/projetos/steve_minecraft/audios/steve_cena5.mp3",
+      "texto_narracao": "Armadura reluzente, horizonte conquistado. O mundo agora curva-se à criatividade sem limites de quem constrói o próprio destino.",
+      "animacao_tipo": "caminhar_triunfo",
+      "camera": {
+        "tipo": "travelling_revelacao",
+        "fov": 40,
+        "posicao_inicial": [-2.5, 2.0, 4.0],
+        "posicao_final": [2.2, 1.5, 3.0],
+        "alvo": [0, 1.1, 0]
+      }
+    }
+  ]
+}

@@ -1,0 +1,2141 @@
+// ============================================================
+// CANAA RENDERER — "O Paradoxo de Canaã dos Carajás"
+// 6 cenas 2D vetoriais com iluminação dinâmica
+// ============================================================
+
+const CanaaRenderer = (() => {
+
+  // ── Paleta de cores ──
+  const C = {
+    // Cena 1 — Cozinha humilde
+    wallDark: '#4a3f35', wallMid: '#5d5044', wallLight: '#6e6055',
+    floor: '#3a3230', floorLight: '#4a4038',
+    sink: '#8a8a8a', sinkDark: '#666', sinkLight: '#aaa',
+    faucet: '#999', faucetRust: '#8B4513',
+    window: '#87CEEB', windowFrame: '#5a4a3a',
+    bucket: '#2266cc', bucketDark: '#1a4d99',
+    hand: '#d4a574', handDark: '#b8956a',
+    water: '#4da6ff',
+
+    // Cena 2 — Mineração / Riqueza
+    skyBlue: '#1a8cff', skyLight: '#4db8ff',
+    dustRed: '#cc4422', dustOrange: '#dd6633',
+    truckYellow: '#ffcc00', truckDark: '#cc9900',
+    truckTire: '#222', truckBody: '#e8b400',
+    gold: '#ffd700', goldDark: '#cc9900',
+    building: '#2a4a6a', buildingGlass: '#4a8ac4',
+    conveyor: '#555', conveyorBelt: '#333',
+    ore: '#8B4513', oreDark: '#6b3410',
+    barGreen: '#22cc44', barGold: '#ffcc00',
+
+    // Cena 3 — Rua de terra
+    dirtRoad: '#b8683a', dirtDark: '#9a5230',
+    heatWave: 'rgba(255,200,100,0.08)',
+    brickRed: '#a0522d', brickDark: '#8B4513',
+    poleWood: '#6b4a2a', wire: '#333',
+    dustCloud: 'rgba(200,120,60,0.35)',
+    crackGround: '#7a4020',
+    truckPipa: '#888', truckPipaRust: '#9a6a3a',
+
+    // Cena 4 — Caminhão-pipa + Escritório
+    galaoYellow: '#ffcc00', galaoBlue: '#2266cc', galaoWhite: '#eee',
+    mahogany: '#5C3317', mahoganyLight: '#7a4a2a',
+    leather: '#1a1a2a', leatherLight: '#2a2a3a',
+    goldBasin: '#ffd700', stampRed: '#cc0000',
+    blind: '#ddd', blindShadow: '#bbb',
+
+    // Cena 5 — Balança
+    bgDark: '#0a0a2e', bgMid: '#141450',
+    scaleMetal: '#8a7a5a', scaleGold: '#c4a040',
+    coinGold: '#ffd700', coinDark: '#cc9900',
+    pipeRust: '#8B4513', cobweb: 'rgba(200,200,200,0.3)',
+    neonWhite: '#ffffff', neonGlow: 'rgba(255,255,255,0.3)',
+
+    // Cena 6 — CTA / Mapa
+    mapBg: '#0a1628', mapBorder: '#1a3a5a',
+    mapHighlight: '#2266cc', mapGlow: 'rgba(34,102,204,0.3)',
+    questionRed: '#ff2244', questionGlow: 'rgba(255,34,68,0.4)',
+    btnYellow: '#ffcc00', btnHeart: '#ff4466', btnFollow: '#22cc44',
+  };
+
+  // ── Utilitários ──
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function clamp(v, mn, mx) { return Math.max(mn, Math.min(mx, v)); }
+  function easeOut(t) { return 1 - Math.pow(1 - t, 3); }
+  function easeIn(t) { return t * t * t; }
+  function easeInOut(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2; }
+  function rand(seed) { let x = Math.sin(seed) * 43758.5453; return x - Math.floor(x); }
+
+  // ── Helpers cinematográficos (adaptados de biblioteca/estilo-palito/modelo/js/kit.js) ──
+  // Câmera em órbita: alvo, azimute (graus), elevação (graus), distância, lente.
+  function orbita(alvo, az, el, d, fov) {
+    const a = (az * Math.PI) / 180, e = (el * Math.PI) / 180;
+    return {
+      p: [alvo[0] + d * Math.cos(e) * Math.sin(a), alvo[1] + d * Math.sin(e), alvo[2] + d * Math.cos(e) * Math.cos(a)],
+      l: alvo, fov: fov || 42,
+    };
+  }
+  // Keyframe de câmera: K(t, alvo, az, el, d, fov)
+  function K(t, alvo, az, el, d, fov) { return { t, alvo, az, el, d, fov: fov || 42 }; }
+  // Interpola a câmera entre keyframes com easing suave (igual ao modelo da biblioteca).
+  function camera(chaves, t) {
+    if (t <= chaves[0].t) return orbita(chaves[0].alvo, chaves[0].az, chaves[0].el, chaves[0].d, chaves[0].fov);
+    for (let i = 0; i < chaves.length - 1; i++) {
+      const a = chaves[i], b = chaves[i + 1];
+      if (t < b.t) {
+        const e = easeInOut((t - a.t) / Math.max(1e-6, b.t - a.t));
+        return orbita(
+          [0, 1, 2].map((j) => lerp(a.alvo[j], b.alvo[j], e)),
+          lerp(a.az, b.az, e), lerp(a.el, b.el, e), lerp(a.d, b.d, e), lerp(a.fov, b.fov, e)
+        );
+      }
+    }
+    const z = chaves[chaves.length - 1];
+    return orbita(z.alvo, z.az, z.el, z.d, z.fov);
+  }
+  // Aplica um resultado de câmera ao THREE.Camera.
+  function applyCam(cam, c) {
+    cam.fov = c.fov; cam.updateProjectionMatrix();
+    cam.position.set(c.p[0], c.p[1], c.p[2]);
+    cam.lookAt(c.l[0], c.l[1], c.l[2]);
+  }
+  // Peça "pulando" para dentro: 0 -> 1.12 -> 1 (entrada com overshoot).
+  function pop(t, t0, d) {
+    d = d || 0.3;
+    const u = (t - t0) / d;
+    if (u <= 0) return 0;
+    if (u >= 1) return 1;
+    return u < 0.6 ? easeOut(u / 0.6) * 1.12 : lerp(1.12, 1, easeInOut((u - 0.6) / 0.4));
+  }
+  // Peça "voando" até o lugar: sai de longe, faz arco e assenta.
+  function voar(t, t0, d, de) {
+    d = d || 0.45; de = de || [3, 2, 0];
+    const u = clamp((t - t0) / d, 0, 1);
+    if (u <= 0) return { visivel: false, pos: de, giro: 1 };
+    const k = easeOut(u), arco = Math.sin(Math.PI * k) * 0.6;
+    return { visivel: true, pos: [de[0] * (1 - k), de[1] * (1 - k) + arco, de[2] * (1 - k)], giro: 1 - k };
+  }
+
+  function drawRR(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // CENA 1: Cozinha humilde — torneira seca (00:00–00:12)
+  // ══════════════════════════════════════════════════════════
+  function drawScene1(ctx, W, H, t, dur) {
+    const p = clamp(t / dur, 0, 1);
+
+    // Fundo — parede de alvenaria
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, C.wallDark);
+    grad.addColorStop(0.6, C.wallMid);
+    grad.addColorStop(1, C.floor);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    // Tijolos expostos
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+    ctx.lineWidth = 1;
+    for (let row = 0; row < 12; row++) {
+      const by = row * (H * 0.55 / 12);
+      ctx.beginPath(); ctx.moveTo(0, by); ctx.lineTo(W, by); ctx.stroke();
+      const offset = (row % 2) * 30;
+      for (let col = 0; col < 8; col++) {
+        const bx = col * (W / 7) + offset;
+        ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx, by + H * 0.55 / 12); ctx.stroke();
+      }
+    }
+
+    // Manchas de umidade
+    for (let i = 0; i < 5; i++) {
+      const mx = W * 0.1 + rand(i * 7) * W * 0.8;
+      const my = H * 0.1 + rand(i * 13) * H * 0.3;
+      const mr = 20 + rand(i * 31) * 40;
+      ctx.fillStyle = `rgba(40,30,20,${0.08 + rand(i * 17) * 0.1})`;
+      ctx.beginPath(); ctx.arc(mx, my, mr, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Piso de cimento
+    ctx.fillStyle = C.floor;
+    ctx.fillRect(0, H * 0.55, W, H * 0.45);
+    ctx.fillStyle = C.floorLight;
+    ctx.fillRect(0, H * 0.55, W, 3);
+
+    // Janela basculante (canto superior direito)
+    const jw = W * 0.22, jh = H * 0.18, jx = W * 0.68, jy = H * 0.06;
+    ctx.fillStyle = C.windowFrame;
+    ctx.fillRect(jx - 4, jy - 4, jw + 8, jh + 8);
+    ctx.fillStyle = C.window;
+    ctx.fillRect(jx, jy, jw, jh);
+    // Vidro trincado
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(jx + jw * 0.3, jy); ctx.lineTo(jx + jw * 0.5, jy + jh * 0.6);
+    ctx.lineTo(jx + jw * 0.7, jy + jh * 0.3); ctx.lineTo(jx + jw * 0.9, jy + jh);
+    ctx.stroke();
+    // Luz entrando
+    const lightGrad = ctx.createLinearGradient(jx, jy + jh, jx - W * 0.15, H * 0.7);
+    lightGrad.addColorStop(0, 'rgba(135,206,235,0.12)');
+    lightGrad.addColorStop(1, 'rgba(135,206,235,0)');
+    ctx.fillStyle = lightGrad;
+    ctx.beginPath();
+    ctx.moveTo(jx, jy + jh); ctx.lineTo(jx + jw, jy + jh);
+    ctx.lineTo(jx + jw + W * 0.1, H * 0.7); ctx.lineTo(jx - W * 0.1, H * 0.7);
+    ctx.closePath(); ctx.fill();
+
+    // Balcão / pia
+    const counterY = H * 0.52, counterH = H * 0.06;
+    ctx.fillStyle = '#5a5a5a';
+    ctx.fillRect(W * 0.05, counterY, W * 0.55, counterH);
+    ctx.fillStyle = '#4a4a4a';
+    ctx.fillRect(W * 0.05, counterY + counterH, W * 0.55, H * 0.03);
+
+    // Cuba da pia
+    const sinkX = W * 0.15, sinkY = counterY + 2, sinkW = W * 0.3, sinkH = H * 0.12;
+    ctx.fillStyle = C.sink;
+    drawRR(ctx, sinkX, sinkY, sinkW, sinkH, 4); ctx.fill();
+    ctx.fillStyle = C.sinkDark;
+    drawRR(ctx, sinkX + 4, sinkY + 4, sinkW - 8, sinkH - 8, 3); ctx.fill();
+    // Reflexo inox
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(sinkX + 6, sinkY + 4, sinkW * 0.3, 2);
+
+    // Filtro de barro (canto esquerdo)
+    const fx = W * 0.06, fy = counterY - H * 0.14, fw = W * 0.07, fh = H * 0.14;
+    ctx.fillStyle = '#8B6914';
+    drawRR(ctx, fx, fy, fw, fh, 6); ctx.fill();
+    ctx.fillStyle = '#a07b1a';
+    drawRR(ctx, fx + 2, fy + 2, fw - 4, fh * 0.35, 4); ctx.fill();
+    // Torneirinha do filtro
+    ctx.fillStyle = '#888';
+    ctx.fillRect(fx + fw * 0.3, fy + fh - 4, fw * 0.4, 4);
+
+    // Louça empilhada
+    for (let i = 0; i < 4; i++) {
+      const pw = W * 0.06 - i * 2, ph = 4;
+      const px = W * 0.48 + i, py = counterY - (i + 1) * 5;
+      ctx.fillStyle = `hsl(210, 15%, ${70 + i * 5}%)`;
+      ctx.beginPath(); ctx.ellipse(px + pw / 2, py, pw / 2, ph, 0, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Torneira central (foco principal)
+    const tapX = W * 0.3, tapBaseY = counterY;
+    const tapH = H * 0.14, tapW = 6;
+
+    // Zoom-in na torneira nos primeiros 30% da cena
+    const zoomP = clamp(p / 0.3, 0, 1);
+    const zoom = 1 + easeOut(zoomP) * 0.15;
+    ctx.save();
+    ctx.translate(tapX, tapBaseY - tapH / 2);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-tapX, -(tapBaseY - tapH / 2));
+
+    // Corpo da torneira
+    ctx.fillStyle = C.faucet;
+    ctx.fillRect(tapX - tapW / 2, tapBaseY - tapH, tapW, tapH);
+    // Curva
+    ctx.beginPath();
+    ctx.moveTo(tapX - tapW / 2, tapBaseY - tapH);
+    ctx.quadraticCurveTo(tapX - tapW / 2, tapBaseY - tapH - 12, tapX + 15, tapBaseY - tapH - 12);
+    ctx.lineTo(tapX + 15, tapBaseY - tapH - 6);
+    ctx.lineTo(tapX + 15, tapBaseY - tapH - 12);
+    ctx.lineWidth = tapW;
+    ctx.strokeStyle = C.faucet;
+    ctx.stroke();
+    // Bico
+    ctx.fillStyle = C.faucet;
+    ctx.fillRect(tapX + 12, tapBaseY - tapH - 14, 8, 10);
+    // Ferrugem na rosca
+    ctx.fillStyle = C.faucetRust;
+    ctx.beginPath(); ctx.arc(tapX, tapBaseY - tapH + 4, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(139,69,19,0.5)';
+    ctx.beginPath(); ctx.arc(tapX + 2, tapBaseY - tapH + 6, 3, 0, Math.PI * 2); ctx.fill();
+
+    // Registro (volante)
+    const regAngle = Math.sin(t * 8) * 0.3 * (p < 0.35 ? 1 : 0);
+    ctx.save();
+    ctx.translate(tapX, tapBaseY - tapH - 2);
+    ctx.rotate(regAngle);
+    ctx.strokeStyle = '#777';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(-10, 0); ctx.lineTo(10, 0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, -10); ctx.lineTo(0, 10); ctx.stroke();
+    ctx.fillStyle = '#888';
+    ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+
+    // Gota d'água (aparece aos 25% da cena)
+    if (p > 0.25 && p < 0.5) {
+      const dropP = (p - 0.25) / 0.25;
+      const dropY = tapBaseY - tapH - 4 + easeIn(dropP) * (sinkY + sinkH - tapBaseY + tapH + 4);
+      const dropSize = 3 - dropP * 1;
+      ctx.fillStyle = C.water;
+      ctx.beginPath(); ctx.arc(tapX + 16, dropY, dropSize, 0, Math.PI * 2); ctx.fill();
+      // Splash
+      if (dropP > 0.9) {
+        const splashR = (dropP - 0.9) * 60;
+        ctx.strokeStyle = `rgba(77,166,255,${1 - dropP})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(tapX + 16, sinkY + sinkH - 2, splashR, 0, Math.PI); ctx.stroke();
+      }
+    }
+
+    ctx.restore();
+
+    // Mão (aparece aos 10%–40%)
+    if (p > 0.08 && p < 0.42) {
+      const handP = p < 0.15 ? (p - 0.08) / 0.07 : (p > 0.35 ? 1 - (p - 0.35) / 0.07 : 1);
+      const hx = lerp(W + 50, tapX + 30, easeOut(clamp(handP, 0, 1)));
+      const hy = tapBaseY - tapH - 10;
+      // Braço
+      ctx.fillStyle = C.hand;
+      ctx.fillRect(hx, hy - 6, 60, 14);
+      // Mão
+      ctx.beginPath(); ctx.arc(hx, hy, 10, 0, Math.PI * 2); ctx.fill();
+      // Dedos
+      for (let f = 0; f < 4; f++) {
+        ctx.beginPath();
+        ctx.arc(hx - 8 + f * 5, hy - 8, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = C.handDark;
+      ctx.beginPath(); ctx.arc(hx - 2, hy + 2, 8, 0, Math.PI); ctx.fill();
+    }
+
+    // Zoom-out para rua (últimos 30% da cena)
+    if (p > 0.65) {
+      const outP = (p - 0.65) / 0.35;
+      const outZoom = 1 + easeIn(outP) * 0.8;
+      const outAlpha = easeIn(outP);
+
+      // Sobreposição da rua de terra
+      ctx.save();
+      ctx.globalAlpha = outAlpha;
+      // Céu
+      const skyG = ctx.createLinearGradient(0, 0, 0, H * 0.5);
+      skyG.addColorStop(0, '#87CEEB');
+      skyG.addColorStop(1, '#b8dff0');
+      ctx.fillStyle = skyG;
+      ctx.fillRect(0, 0, W, H * 0.5);
+      // Terra seca
+      ctx.fillStyle = C.dirtRoad;
+      ctx.fillRect(0, H * 0.45, W, H * 0.55);
+      // Rachaduras
+      ctx.strokeStyle = C.crackGround;
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 12; i++) {
+        const cx = rand(i * 3) * W, cy = H * 0.5 + rand(i * 7) * H * 0.4;
+        ctx.beginPath(); ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + 15 + rand(i * 11) * 20, cy + 5 + rand(i * 13) * 10);
+        ctx.stroke();
+      }
+
+      // Personagem olhando balde vazio
+      const charX = W * 0.5, charY = H * 0.55;
+      // Corpo (silhueta simples)
+      ctx.fillStyle = '#333';
+      ctx.fillRect(charX - 8, charY - 40, 16, 40); // tronco
+      ctx.fillRect(charX - 6, charY, 5, 25); // perna esq
+      ctx.fillRect(charX + 1, charY, 5, 25); // perna dir
+      // Cabeça
+      ctx.beginPath(); ctx.arc(charX, charY - 48, 10, 0, Math.PI * 2); ctx.fill();
+      // Braços segurando balde
+      ctx.fillRect(charX - 14, charY - 30, 6, 18);
+      ctx.fillRect(charX + 8, charY - 30, 6, 18);
+
+      // Balde azul vazio
+      ctx.fillStyle = C.bucket;
+      ctx.beginPath();
+      ctx.moveTo(charX - 12, charY - 12);
+      ctx.lineTo(charX + 12, charY - 12);
+      ctx.lineTo(charX + 10, charY + 8);
+      ctx.lineTo(charX - 10, charY + 8);
+      ctx.closePath(); ctx.fill();
+      // Interior vazio (mais escuro)
+      ctx.fillStyle = C.bucketDark;
+      ctx.beginPath();
+      ctx.ellipse(charX, charY - 12, 10, 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // CENA 2: Complexo mineral — riqueza (00:12–00:26)
+  // ══════════════════════════════════════════════════════════
+  function drawScene2(ctx, W, H, t, dur) {
+    const p = clamp(t / dur, 0, 1);
+
+    // Céu azul vívido
+    const skyG = ctx.createLinearGradient(0, 0, 0, H * 0.6);
+    skyG.addColorStop(0, '#0066cc');
+    skyG.addColorStop(0.5, C.skyBlue);
+    skyG.addColorStop(1, C.skyLight);
+    ctx.fillStyle = skyG;
+    ctx.fillRect(0, 0, W, H);
+
+    // Poeira avermelhada ao fundo
+    for (let i = 0; i < 8; i++) {
+      const dx = rand(i * 5) * W;
+      const dy = H * 0.35 + rand(i * 9) * H * 0.2;
+      const dr = 30 + rand(i * 15) * 60;
+      ctx.fillStyle = `rgba(204,68,34,${0.06 + rand(i * 21) * 0.08})`;
+      ctx.beginPath(); ctx.arc(dx, dy, dr, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Montanhas / terraplenagem ao fundo
+    ctx.fillStyle = '#8B6914';
+    ctx.beginPath();
+    ctx.moveTo(0, H * 0.5);
+    ctx.lineTo(W * 0.15, H * 0.35);
+    ctx.lineTo(W * 0.3, H * 0.42);
+    ctx.lineTo(W * 0.5, H * 0.3);
+    ctx.lineTo(W * 0.7, H * 0.38);
+    ctx.lineTo(W * 0.85, H * 0.32);
+    ctx.lineTo(W, H * 0.4);
+    ctx.lineTo(W, H * 0.55);
+    ctx.lineTo(0, H * 0.55);
+    ctx.closePath(); ctx.fill();
+
+    // Esteiras rolantes (perspectiva)
+    ctx.strokeStyle = C.conveyor;
+    ctx.lineWidth = 4;
+    for (let i = 0; i < 3; i++) {
+      const sy = H * 0.42 + i * 15;
+      ctx.beginPath();
+      ctx.moveTo(W * 0.1, sy);
+      ctx.lineTo(W * 0.9, sy - 20);
+      ctx.stroke();
+      // Correia
+      ctx.strokeStyle = C.conveyorBelt;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(W * 0.1, sy - 2);
+      ctx.lineTo(W * 0.9, sy - 22);
+      ctx.stroke();
+      ctx.strokeStyle = C.conveyor;
+      ctx.lineWidth = 4;
+    }
+
+    // Prédios administrativos
+    for (let i = 0; i < 4; i++) {
+      const bw = 30 + rand(i * 41) * 25;
+      const bh = 40 + rand(i * 43) * 50;
+      const bx = W * 0.55 + i * (bw + 8);
+      const by = H * 0.5 - bh;
+      ctx.fillStyle = C.building;
+      ctx.fillRect(bx, by, bw, bh);
+      // Vidros
+      ctx.fillStyle = C.buildingGlass;
+      for (let wy = 0; wy < 4; wy++) {
+        for (let wx = 0; wx < 3; wx++) {
+          ctx.fillRect(bx + 4 + wx * 9, by + 5 + wy * 12, 6, 8);
+        }
+      }
+    }
+
+    // Letreiro dourado
+    const signY = H * 0.12;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    drawRR(ctx, W * 0.1, signY, W * 0.8, 36, 6); ctx.fill();
+    ctx.strokeStyle = C.gold;
+    ctx.lineWidth = 2;
+    drawRR(ctx, W * 0.1, signY, W * 0.8, 36, 6); ctx.stroke();
+    ctx.fillStyle = C.gold;
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('CANAÃ DOS CARAJÁS — A TERRA PROMETIDA', W / 2, signY + 24);
+    // ── Caminhão 2D removido: o caminhão 3D é o herói desta cena ──
+
+    // Caminhão gigante (fora-de-estrada) — animado da esquerda para direita
+    // (caminhão 3D é o herói — desenhado na camada 3D)
+    // (caminhão 3D é o herói — desenhado na camada 3D)
+    if (p > 0.3) {
+
+    // Rodas traseiras (gigantes)
+    // (caminhão 3D é o herói)
+    // (caminhão 2D removido — o caminhão 3D é o herói desta cena)
+    if (false) { // DESATIVADO: caminhão 2D antigo (o 3D é o herói)
+    /* bloco morto — o caminhão 3D é o herói */
+    // Aros
+    ctx.fillStyle = '#444';
+    ctx.beginPath(); ctx.arc(-30, 30, 12, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(30, 30, 12, 0, Math.PI * 2); ctx.fill();
+
+    // Chassi
+    ctx.fillStyle = C.truckDark;
+    ctx.fillRect(-50, 5, 100, 12);
+
+    // Caçamba (carregada de minério)
+    ctx.fillStyle = C.truckYellow;
+    ctx.beginPath();
+    ctx.moveTo(-55, 5); ctx.lineTo(-50, -35);
+    ctx.lineTo(45, -35); ctx.lineTo(55, 5);
+    ctx.closePath(); ctx.fill();
+
+    // Minério na caçamba
+    ctx.fillStyle = C.ore;
+    ctx.beginPath();
+    ctx.moveTo(-48, -33); ctx.lineTo(-30, -42);
+    ctx.lineTo(-10, -38); ctx.lineTo(10, -44);
+    ctx.lineTo(30, -38); ctx.lineTo(43, -33);
+    ctx.closePath(); ctx.fill();
+
+    // Cabine
+    ctx.fillStyle = C.truckBody;
+    drawRR(ctx, 40, -30, 25, 35, 3); ctx.fill();
+    ctx.fillStyle = '#88ccff';
+    ctx.fillRect(44, -26, 18, 14);
+    }
+    }
+
+    // Poeira levantada
+    // (poeira 3D na camada 3D)
+
+    // Gráficos de barras 2D sobrepostos (aparecem a partir de 30%)
+    if (p > 0.3) {
+      const barP = easeOut(clamp((p - 0.3) / 0.4, 0, 1));
+      const barBaseY = H * 0.85;
+      const barColors = [C.barGreen, C.barGold, C.barGreen, C.barGold, C.barGreen];
+      for (let i = 0; i < 5; i++) {
+        const bh = (30 + i * 20 + rand(i * 3) * 15) * barP;
+        const bx = W * 0.08 + i * 28;
+        ctx.fillStyle = barColors[i];
+        ctx.fillRect(bx, barBaseY - bh, 20, bh);
+        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+        ctx.fillRect(bx, barBaseY - bh, 20, 3);
+      }
+    }
+
+    // Contador de cifras (aparece a partir de 40%)
+    if (p > 0.4) {
+      const countP = clamp((p - 0.4) / 0.5, 0, 1);
+      const value = Math.floor(easeOut(countP) * 47000000000);
+      const formatted = 'R$ ' + value.toLocaleString('pt-BR');
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      drawRR(ctx, W * 0.5, H * 0.72, W * 0.42, 40, 8); ctx.fill();
+      ctx.fillStyle = C.gold;
+      ctx.font = 'bold 18px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(formatted, W * 0.5 + W * 0.21, H * 0.72 + 27);
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // CENA 3: Rua de terra — realidade oculta (00:26–00:40)
+  // ══════════════════════════════════════════════════════════
+  function drawScene3(ctx, W, H, t, dur) {
+    const p = clamp(t / dur, 0, 1);
+
+    // Efeito de espelho estilhaçando (primeiros 15%)
+    if (p < 0.15) {
+      const shatterP = p / 0.15;
+      // Fundo dourado (cena anterior)
+      ctx.fillStyle = C.gold;
+      ctx.fillRect(0, 0, W, H);
+      // Rachaduras
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      ctx.lineWidth = 2;
+      const cx = W / 2, cy = H / 2;
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2 + rand(i * 3) * 0.5;
+        const len = shatterP * Math.max(W, H);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(angle) * len, cy + Math.sin(angle) * len);
+        ctx.stroke();
+      }
+      // Fragmentos caindo
+      for (let i = 0; i < 12; i++) {
+        const fx2 = rand(i * 7) * W;
+        const fy2 = rand(i * 11) * H * shatterP;
+        const fs = 10 + rand(i * 13) * 20;
+        ctx.fillStyle = `rgba(255,215,0,${1 - shatterP})`;
+        ctx.fillRect(fx2, fy2, fs, fs * 0.6);
+      }
+      return;
+    }
+
+    // Céu de meio-dia (sol a pino)
+    const skyG = ctx.createLinearGradient(0, 0, 0, H * 0.5);
+    skyG.addColorStop(0, '#e8d5a0');
+    skyG.addColorStop(0.5, '#f0e0b8');
+    skyG.addColorStop(1, '#e8d0a0');
+    ctx.fillStyle = skyG;
+    ctx.fillRect(0, 0, W, H);
+
+    // Sol forte
+    ctx.fillStyle = '#fff8e0';
+    ctx.beginPath(); ctx.arc(W * 0.5, H * 0.08, 25, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,248,224,0.3)';
+    ctx.beginPath(); ctx.arc(W * 0.5, H * 0.08, 45, 0, Math.PI * 2); ctx.fill();
+
+    // Ondas de calor (refração)
+    for (let i = 0; i < 6; i++) {
+      const hy = H * 0.3 + i * H * 0.08;
+      const hw = Math.sin(t * 2 + i * 1.5) * 8;
+      ctx.fillStyle = C.heatWave;
+      ctx.fillRect(0, hy + hw, W, 4);
+    }
+
+    // Rua de terra
+    const roadG = ctx.createLinearGradient(0, H * 0.4, 0, H);
+    roadG.addColorStop(0, C.dirtRoad);
+    roadG.addColorStop(1, C.dirtDark);
+    ctx.fillStyle = roadG;
+    ctx.fillRect(0, H * 0.4, W, H * 0.6);
+
+    // Poeira avermelhada cobrindo tudo
+    ctx.fillStyle = 'rgba(184,104,58,0.15)';
+    ctx.fillRect(0, H * 0.35, W, H * 0.65);
+
+    // Casas inacabadas (tijolos expostos)
+    for (let side = 0; side < 2; side++) {
+      for (let i = 0; i < 3; i++) {
+        const hx = side === 0 ? W * 0.02 + i * W * 0.14 : W * 0.62 + i * W * 0.14;
+        const hy = H * 0.22 + rand(i * 7 + side * 31) * H * 0.05;
+        const hw = W * 0.12;
+        const hh = H * 0.18;
+        // Parede de tijolo
+        ctx.fillStyle = C.brickRed;
+        ctx.fillRect(hx, hy, hw, hh);
+        // Linhas de tijolo
+        ctx.strokeStyle = C.brickDark;
+        ctx.lineWidth = 0.5;
+        for (let b = 0; b < 6; b++) {
+          ctx.beginPath(); ctx.moveTo(hx, hy + b * hh / 6); ctx.lineTo(hx + hw, hy + b * hh / 6); ctx.stroke();
+        }
+        // Sem teto / teto incompleto
+        ctx.fillStyle = '#666';
+        ctx.fillRect(hx - 2, hy - 3, hw * 0.6, 3);
+      }
+    }
+
+    // Postes de madeira com fiação
+    for (let i = 0; i < 3; i++) {
+      const px = W * 0.2 + i * W * 0.3;
+      const py = H * 0.15;
+      const ph = H * 0.3;
+      ctx.fillStyle = C.poleWood;
+      ctx.fillRect(px - 2, py, 4, ph);
+      // Cruzeta
+      ctx.fillRect(px - 12, py + 8, 24, 3);
+      // Fios
+      ctx.strokeStyle = C.wire;
+      ctx.lineWidth = 1;
+      if (i < 2) {
+        const nx = W * 0.2 + (i + 1) * W * 0.3;
+        ctx.beginPath();
+        ctx.moveTo(px - 10, py + 10);
+        ctx.quadraticCurveTo((px + nx) / 2, py + 25, nx - 10, py + 10);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(px + 10, py + 10);
+        ctx.quadraticCurveTo((px + nx) / 2, py + 30, nx + 10, py + 10);
+        ctx.stroke();
+      }
+    }
+
+    // Poças de lama seca e rachada
+    for (let i = 0; i < 5; i++) {
+      const mx = W * 0.1 + rand(i * 7) * W * 0.8;
+      const my = H * 0.55 + rand(i * 13) * H * 0.3;
+      const mw = 20 + rand(i * 17) * 30;
+      const mh = 6 + rand(i * 23) * 8;
+      ctx.fillStyle = '#7a5020';
+      ctx.beginPath(); ctx.ellipse(mx, my, mw, mh, 0, 0, Math.PI * 2); ctx.fill();
+      // Rachaduras
+      ctx.strokeStyle = C.crackGround;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(mx - mw * 0.5, my); ctx.lineTo(mx + mw * 0.3, my - 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(mx - mw * 0.2, my + 2); ctx.lineTo(mx + mw * 0.5, my + 1); ctx.stroke();
+    }
+
+    // Caminhão-pipa ao longe (aproxima a partir de 30%)
+    if (p > 0.25) {
+      const truckP = easeIn(clamp((p - 0.25) / 0.5, 0, 1));
+      const truckScale = lerp(0.3, 1.0, truckP);
+      const truckX = lerp(W * 0.7, W * 0.45, truckP);
+      const truckY = H * 0.55;
+
+      ctx.save();
+      ctx.translate(truckX, truckY);
+      ctx.scale(truckScale, truckScale);
+
+      // Rodas
+      ctx.fillStyle = '#333';
+      ctx.beginPath(); ctx.arc(-25, 20, 12, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(25, 20, 12, 0, Math.PI * 2); ctx.fill();
+
+      // Tanque (pipa)
+      ctx.fillStyle = C.truckPipa;
+      drawRR(ctx, -45, -20, 90, 35, 8); ctx.fill();
+      // Ferrugem
+      ctx.fillStyle = C.truckPipaRust;
+      ctx.beginPath(); ctx.arc(-20, -5, 8, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(15, 0, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(30, -10, 5, 0, Math.PI * 2); ctx.fill();
+
+      // Cabine
+      ctx.fillStyle = '#777';
+      drawRR(ctx, 35, -15, 20, 30, 3); ctx.fill();
+      ctx.fillStyle = '#aaddff';
+      ctx.fillRect(38, -12, 14, 10);
+
+      ctx.restore();
+
+      // Nuvem de poeira (freia brusca aos 70%)
+      if (p > 0.65) {
+        const dustP = clamp((p - 0.65) / 0.3, 0, 1);
+        for (let i = 0; i < 15; i++) {
+          const dx = truckX - 30 - rand(i * 3) * 80 * dustP;
+          const dy = truckY + 10 + rand(i * 7) * 30 - dustP * 20;
+          const dr = (10 + rand(i * 11) * 25) * dustP;
+          ctx.fillStyle = `rgba(200,130,60,${0.3 * dustP * (1 - dustP * 0.5)})`;
+          ctx.beginPath(); ctx.arc(dx, dy, dr, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // CENA 4: Humilhação + Escritório (00:40–00:58)
+  // ══════════════════════════════════════════════════════════
+  function drawScene4(ctx, W, H, t, dur) {
+    const p = clamp(t / dur, 0, 1);
+    const halfPoint = 0.5; // 4A: 0-50%, 4B: 50-100%
+
+    if (p < halfPoint) {
+      drawScene4A(ctx, W, H, t, dur * halfPoint, p / halfPoint);
+    } else {
+      drawScene4B(ctx, W, H, t, dur * (1 - halfPoint), (p - halfPoint) / (1 - halfPoint));
+    }
+  }
+
+  // 4A: Traseira do caminhão-pipa, filas de pessoas
+  function drawScene4A(ctx, W, H, t, subDur, p) {
+    // Céu empoeirado
+    ctx.fillStyle = '#d4c0a0';
+    ctx.fillRect(0, 0, W, H * 0.4);
+    // Chão de cascalho
+    ctx.fillStyle = '#9a7a5a';
+    ctx.fillRect(0, H * 0.35, W, H * 0.65);
+
+    // Cascalho
+    for (let i = 0; i < 30; i++) {
+      ctx.fillStyle = `rgba(120,90,60,${0.3 + rand(i * 3) * 0.3})`;
+      ctx.beginPath();
+      ctx.arc(rand(i * 7) * W, H * 0.4 + rand(i * 11) * H * 0.5, 1 + rand(i * 13) * 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Caminhão-pipa (traseira)
+    const tkX = W * 0.35, tkY = H * 0.3;
+    // Corpo do tanque
+    ctx.fillStyle = C.truckPipa;
+    drawRR(ctx, tkX - 80, tkY, 160, H * 0.25, 8); ctx.fill();
+    // Faixa de ferrugem
+    ctx.fillStyle = 'rgba(154,106,58,0.4)';
+    ctx.fillRect(tkX - 80, tkY + H * 0.15, 160, H * 0.05);
+
+    // Torneiras improvisadas na traseira
+    for (let i = 0; i < 4; i++) {
+      const tx = tkX - 60 + i * 40;
+      const ty = tkY + H * 0.25;
+      ctx.fillStyle = '#888';
+      ctx.fillRect(tx - 2, ty, 4, 12);
+      ctx.fillRect(tx - 4, ty + 10, 8, 3);
+      // Gotejamento desregulado
+      if (rand(Math.floor(t * 3) + i * 100) > 0.4) {
+        const dropY = ty + 14 + (t * 60 + i * 20) % 30;
+        ctx.fillStyle = C.water;
+        ctx.beginPath(); ctx.arc(tx, dropY, 1.5, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+
+    // Baldes e galões enfileirados
+    const galColors = [C.galaoYellow, C.galaoBlue, C.galaoWhite, C.galaoYellow, C.galaoBlue, C.galaoWhite, C.galaoYellow];
+    for (let i = 0; i < 7; i++) {
+      const gx = W * 0.08 + i * W * 0.11;
+      const gy = H * 0.72 + rand(i * 3) * 5;
+      const gw = 14, gh = 20;
+      ctx.fillStyle = galColors[i];
+      drawRR(ctx, gx, gy, gw, gh, 2); ctx.fill();
+      // Alça
+      ctx.strokeStyle = '#666';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(gx + gw / 2, gy, gw / 3, Math.PI, 0); ctx.stroke();
+    }
+
+    // Pessoas (silhuetas curvadas carregando galões)
+    const numPeople = 6;
+    for (let i = 0; i < numPeople; i++) {
+      const px = W * 0.1 + i * W * 0.13 + Math.sin(t * 0.5 + i) * 3;
+      const py = H * 0.55;
+      const isOld = i === 1 || i === 4;
+
+      ctx.fillStyle = `hsl(${20 + rand(i * 7) * 30}, ${20 + rand(i * 11) * 20}%, ${15 + rand(i * 13) * 15}%)`;
+
+      // Corpo curvado
+      ctx.save();
+      ctx.translate(px, py);
+      if (isOld) ctx.rotate(0.15);
+
+      // Pernas
+      ctx.fillRect(-4, 20, 4, 18);
+      ctx.fillRect(1, 20, 4, 18);
+      // Tronco (curvado)
+      ctx.fillRect(-5, 0, 11, 22);
+      // Cabeça
+      ctx.beginPath(); ctx.arc(1, -6, 6, 0, Math.PI * 2); ctx.fill();
+      // Braços estendidos segurando galão
+      ctx.fillRect(8, 5, 14, 4);
+      // Galão na mão
+      ctx.fillStyle = galColors[i % galColors.length];
+      drawRR(ctx, 18, 8, 10, 14, 2); ctx.fill();
+
+      ctx.restore();
+    }
+
+    // Poeira ambiente
+    for (let i = 0; i < 8; i++) {
+      const dx = rand(i * 3 + Math.floor(t)) * W;
+      const dy = H * 0.3 + rand(i * 7 + Math.floor(t * 2)) * H * 0.4;
+      ctx.fillStyle = `rgba(180,140,100,${0.05 + rand(i * 11) * 0.05})`;
+      ctx.beginPath(); ctx.arc(dx, dy, 15 + rand(i * 13) * 20, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  // 4B: Escritório de luxo — burocrata lavando mãos
+  function drawScene4B(ctx, W, H, t, subDur, p) {
+    // Fundo — parede de escritório
+    const wallG = ctx.createLinearGradient(0, 0, 0, H);
+    wallG.addColorStop(0, '#1a1a2e');
+    wallG.addColorStop(1, '#0a0a1a');
+    ctx.fillStyle = wallG;
+    ctx.fillRect(0, 0, W, H);
+
+    // Persianas entreabertas (fundo)
+    const blindX = W * 0.6, blindW = W * 0.35, blindY = H * 0.05, blindH = H * 0.4;
+    ctx.fillStyle = '#2a3a4a';
+    ctx.fillRect(blindX, blindY, blindW, blindH);
+    for (let i = 0; i < 8; i++) {
+      ctx.fillStyle = i % 2 === 0 ? C.blind : C.blindShadow;
+      ctx.fillRect(blindX, blindY + i * blindH / 8, blindW, blindH / 10);
+    }
+    // Vista pela persiana
+    ctx.fillStyle = 'rgba(100,150,200,0.1)';
+    ctx.fillRect(blindX + 5, blindY + 5, blindW - 10, blindH - 10);
+
+    // Mesa de mogno
+    const tableY = H * 0.55, tableH = H * 0.08;
+    const tableG = ctx.createLinearGradient(0, tableY, 0, tableY + tableH);
+    tableG.addColorStop(0, C.mahoganyLight);
+    tableG.addColorStop(1, C.mahogany);
+    ctx.fillStyle = tableG;
+    ctx.fillRect(W * 0.05, tableY, W * 0.9, tableH);
+    // Reflexo
+    ctx.fillStyle = 'rgba(255,255,255,0.05)';
+    ctx.fillRect(W * 0.05, tableY, W * 0.9, 2);
+
+    // Poltronas de couro
+    for (let i = 0; i < 3; i++) {
+      const cx = W * 0.15 + i * W * 0.3;
+      ctx.fillStyle = C.leather;
+      drawRR(ctx, cx, tableY - 30, 40, 32, 5); ctx.fill();
+      ctx.fillStyle = C.leatherLight;
+      drawRR(ctx, cx + 3, tableY - 28, 34, 28, 4); ctx.fill();
+    }
+
+    // Bacia dourada na mesa
+    const basinX = W * 0.35, basinY = tableY - 8;
+    ctx.fillStyle = C.goldBasin;
+    ctx.beginPath();
+    ctx.ellipse(basinX, basinY, 30, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = C.goldDark;
+    ctx.beginPath();
+    ctx.ellipse(basinX, basinY - 2, 26, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Água na bacia
+    ctx.fillStyle = 'rgba(100,180,255,0.4)';
+    ctx.beginPath();
+    ctx.ellipse(basinX, basinY - 2, 22, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Figura burocrática (sombra, sem rosto)
+    const figX = W * 0.35, figY = H * 0.15;
+    ctx.fillStyle = '#111';
+    // Corpo (terno)
+    ctx.fillRect(figX - 20, figY + 30, 40, tableY - figY - 30);
+    // Gravata
+    ctx.fillStyle = '#300';
+    ctx.fillRect(figX - 3, figY + 35, 6, 25);
+    // Cabeça (sombra total)
+    ctx.fillStyle = '#0a0a0a';
+    ctx.beginPath(); ctx.arc(figX, figY + 20, 14, 0, Math.PI * 2); ctx.fill();
+
+    // Mãos na bacia (animadas — lavando)
+    const washT = Math.sin(t * 3) * 5;
+    ctx.fillStyle = '#d4a574';
+    ctx.beginPath(); ctx.arc(figX - 8 + washT, basinY - 6, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(figX + 8 - washT, basinY - 6, 5, 0, Math.PI * 2); ctx.fill();
+
+    // Respingos de água
+    if (Math.sin(t * 3) > 0.5) {
+      for (let i = 0; i < 3; i++) {
+        ctx.fillStyle = 'rgba(100,180,255,0.5)';
+        ctx.beginPath();
+        ctx.arc(basinX - 10 + rand(i * 3 + Math.floor(t * 10)) * 20, basinY - 12 - rand(i * 7) * 8, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Pasta de contrato aberta
+    const folderX = W * 0.6, folderY = tableY - 15;
+    ctx.fillStyle = '#f5f0e0';
+    ctx.save();
+    ctx.translate(folderX, folderY);
+    ctx.rotate(-0.05);
+    ctx.fillRect(0, 0, 50, 30);
+    ctx.fillStyle = '#e8e0d0';
+    ctx.fillRect(50, 0, 50, 30);
+    // Texto simulado
+    ctx.fillStyle = '#666';
+    for (let i = 0; i < 5; i++) {
+      ctx.fillRect(5, 5 + i * 5, 40, 2);
+      ctx.fillRect(55, 5 + i * 5, 40, 2);
+    }
+    ctx.restore();
+
+    // Carimbo "SERVIÇO PRIVATIZADO" (aparece aos 60%)
+    if (p > 0.6) {
+      const stampP = easeOut(clamp((p - 0.6) / 0.15, 0, 1));
+      ctx.save();
+      ctx.translate(folderX + 50, folderY + 15);
+      ctx.rotate(-0.1);
+      ctx.globalAlpha = stampP;
+      ctx.strokeStyle = C.stampRed;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-35, -10, 70, 20);
+      ctx.fillStyle = C.stampRed;
+      ctx.font = 'bold 9px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('SERVIÇO', 0, -1);
+      ctx.fillText('PRIVATIZADO', 0, 8);
+      ctx.restore();
+    }
+
+    // Toalha de linho
+    ctx.fillStyle = '#f0ebe0';
+    ctx.fillRect(figX + 25, tableY - 6, 20, 8);
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // CENA 5: Balança da justiça (00:58–01:12)
+  // ══════════════════════════════════════════════════════════
+  function drawScene5(ctx, W, H, t, dur) {
+    const p = clamp(t / dur, 0, 1);
+
+    // Fundo gradiente azul-marinho
+    const bgG = ctx.createRadialGradient(W / 2, H / 2, 50, W / 2, H / 2, W * 0.7);
+    bgG.addColorStop(0, C.bgMid);
+    bgG.addColorStop(1, C.bgDark);
+    ctx.fillStyle = bgG;
+    ctx.fillRect(0, 0, W, H);
+
+    // Iluminação cenográfica (spotlight)
+    const spotG = ctx.createRadialGradient(W / 2, H * 0.3, 20, W / 2, H * 0.3, W * 0.4);
+    spotG.addColorStop(0, 'rgba(255,255,255,0.08)');
+    spotG.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = spotG;
+    ctx.fillRect(0, 0, W, H);
+
+    // Balança da justiça
+    const scaleX = W / 2, scaleY = H * 0.15;
+    const armLen = W * 0.3;
+    const poleH = H * 0.45;
+
+    // Peso caindo no prato esquerdo (a partir de 20%)
+    const tiltP = easeInOut(clamp((p - 0.2) / 0.5, 0, 1));
+    const tiltAngle = tiltP * 0.25; // Inclinação máxima
+
+    // Base
+    ctx.fillStyle = C.scaleMetal;
+    ctx.fillRect(scaleX - 20, scaleY + poleH, 40, 8);
+    // Pilar
+    ctx.fillRect(scaleX - 3, scaleY, 6, poleH);
+    // Topo decorativo
+    ctx.beginPath(); ctx.arc(scaleX, scaleY - 5, 8, 0, Math.PI * 2); ctx.fill();
+
+    // Braço da balança (rotaciona)
+    ctx.save();
+    ctx.translate(scaleX, scaleY + 10);
+    ctx.rotate(tiltAngle);
+
+    // Barra horizontal
+    ctx.fillStyle = C.scaleGold;
+    ctx.fillRect(-armLen, -3, armLen * 2, 6);
+
+    // Correntes prato esquerdo
+    const leftChainLen = 40;
+    ctx.strokeStyle = C.scaleMetal;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-armLen, 0); ctx.lineTo(-armLen, leftChainLen); ctx.stroke();
+
+    // Prato esquerdo (dinheiro)
+    ctx.fillStyle = C.scaleGold;
+    ctx.beginPath();
+    ctx.ellipse(-armLen, leftChainLen + 5, 35, 10, 0, 0, Math.PI);
+    ctx.fill();
+
+    // Sacos de dinheiro no prato esquerdo
+    const numBags = Math.floor(tiltP * 8) + 2;
+    for (let i = 0; i < numBags; i++) {
+      const bx = -armLen - 20 + rand(i * 3) * 40;
+      const by = leftChainLen - 5 - i * 8;
+      // Saco
+      ctx.fillStyle = '#8B6914';
+      drawRR(ctx, bx - 8, by - 10, 16, 14, 3); ctx.fill();
+      // Símbolo $
+      ctx.fillStyle = C.coinGold;
+      ctx.font = 'bold 8px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('$', bx, by + 1);
+    }
+
+    // Lingotes
+    for (let i = 0; i < Math.floor(tiltP * 4); i++) {
+      const lx = -armLen - 15 + i * 12;
+      const ly = leftChainLen - 2 - numBags * 8 - i * 5;
+      ctx.fillStyle = C.coinGold;
+      ctx.fillRect(lx, ly, 10, 5);
+      ctx.fillStyle = C.coinDark;
+      ctx.fillRect(lx + 1, ly + 1, 8, 3);
+    }
+
+    // Texto CFEM
+    if (tiltP > 0.3) {
+      ctx.fillStyle = C.coinGold;
+      ctx.font = 'bold 7px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('CFEM / ROYALTIES', -armLen, leftChainLen + 20);
+    }
+
+    // Correntes prato direito
+    ctx.beginPath(); ctx.moveTo(armLen, 0); ctx.lineTo(armLen, leftChainLen); ctx.stroke();
+
+    // Prato direito (torneira seca)
+    ctx.fillStyle = C.scaleGold;
+    ctx.beginPath();
+    ctx.ellipse(armLen, leftChainLen + 5, 35, 10, 0, 0, Math.PI);
+    ctx.fill();
+
+    // Torneira seca no prato direito
+    ctx.fillStyle = '#888';
+    ctx.fillRect(armLen - 2, leftChainLen - 15, 4, 15);
+    ctx.fillRect(armLen - 2, leftChainLen - 15, 10, 4);
+    // Teia de aranha
+    ctx.strokeStyle = C.cobweb;
+    ctx.lineWidth = 0.5;
+    for (let i = 0; i < 4; i++) {
+      ctx.beginPath();
+      ctx.moveTo(armLen + 5, leftChainLen - 12);
+      ctx.lineTo(armLen + 10 + i * 5, leftChainLen - 18 + i * 3);
+      ctx.stroke();
+    }
+    // Cano cortado
+    ctx.fillStyle = C.pipeRust;
+    ctx.fillRect(armLen - 15, leftChainLen - 5, 12, 8);
+
+    ctx.restore();
+
+    // Letreiros neon (aparecem a partir de 50%)
+    if (p > 0.5) {
+      const neonP = easeOut(clamp((p - 0.5) / 0.3, 0, 1));
+      ctx.save();
+      ctx.globalAlpha = neonP;
+
+      // "BILHÕES ARRECADADOS" (esquerda, verde/dourado)
+      ctx.shadowColor = C.gold;
+      ctx.shadowBlur = 15;
+      ctx.fillStyle = C.gold;
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('BILHÕES ARRECADADOS', W * 0.22, H * 0.82);
+
+      // "DIREITO NEGADO" (direita, vermelho)
+      ctx.shadowColor = '#ff2244';
+      ctx.shadowBlur = 15;
+      ctx.fillStyle = '#ff2244';
+      ctx.fillText('DIREITO NEGADO', W * 0.78, H * 0.25);
+
+      ctx.restore();
+    }
+
+    // Partículas de ouro caindo
+    if (tiltP > 0.1) {
+      for (let i = 0; i < 10; i++) {
+        const gx = scaleX - armLen + rand(i * 3 + Math.floor(t * 5)) * 60 - 30;
+        const gy = scaleY + 50 + ((t * 80 + i * 30) % (H * 0.5));
+        ctx.fillStyle = `rgba(255,215,0,${0.3 + rand(i * 7) * 0.4})`;
+        ctx.beginPath(); ctx.arc(gx, gy, 1.5 + rand(i * 11), 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // CENA 6: CTA — Mapa do Pará + botões (01:12–01:25)
+  // ══════════════════════════════════════════════════════════
+  function drawScene6(ctx, W, H, t, dur) {
+    const p = clamp(t / dur, 0, 1);
+
+    // Fundo escuro
+    ctx.fillStyle = C.mapBg;
+    ctx.fillRect(0, 0, W, H);
+
+    // Mapa do Pará (silhueta simplificada)
+    ctx.save();
+    ctx.translate(W / 2, H * 0.4);
+    const mapScale = Math.min(W, H) * 0.35;
+    ctx.scale(mapScale / 100, mapScale / 100);
+
+    // Contorno simplificado do Pará
+    ctx.fillStyle = '#0d2137';
+    ctx.strokeStyle = C.mapBorder;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-40, -30);
+    ctx.lineTo(-20, -45);
+    ctx.lineTo(10, -50);
+    ctx.lineTo(35, -40);
+    ctx.lineTo(45, -20);
+    ctx.lineTo(50, 0);
+    ctx.lineTo(40, 20);
+    ctx.lineTo(30, 35);
+    ctx.lineTo(10, 40);
+    ctx.lineTo(-10, 35);
+    ctx.lineTo(-30, 25);
+    ctx.lineTo(-45, 10);
+    ctx.lineTo(-50, -10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Contorno de Canaã dos Carajás (destaque)
+    const canaaX = 15, canaaY = 10;
+    ctx.fillStyle = C.mapHighlight;
+    ctx.beginPath();
+    ctx.arc(canaaX, canaaY, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = C.mapGlow;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(canaaX, canaaY, 10 + Math.sin(t * 3) * 2, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Ponto de interrogação 3D pulsante
+    const pulseScale = 1 + Math.sin(t * 4) * 0.15;
+    ctx.save();
+    ctx.translate(canaaX, canaaY - 15);
+    ctx.scale(pulseScale, pulseScale);
+    ctx.fillStyle = C.questionRed;
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = C.questionGlow;
+    ctx.shadowBlur = 10;
+    ctx.fillText('?', 0, 0);
+    ctx.restore();
+
+    ctx.restore();
+
+    // Zoom-out dinâmico (primeiros 20%)
+    const zoomP = easeOut(clamp(p / 0.2, 0, 1));
+    const mainZoom = lerp(1.3, 1.0, zoomP);
+    ctx.save();
+    ctx.translate(W / 2, H / 2);
+    ctx.scale(mainZoom, mainZoom);
+    ctx.translate(-W / 2, -H / 2);
+
+    // Label "Canaã dos Carajás"
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('CANAÃ DOS CARAJÁS', W / 2, H * 0.68);
+    ctx.fillStyle = '#88aacc';
+    ctx.font = '10px sans-serif';
+    ctx.fillText('Pará — Brasil', W / 2, H * 0.72);
+
+    ctx.restore();
+
+    // Botões animados (aparecem sequencialmente)
+    const btnY = H * 0.82;
+    const btnH = 36;
+    const btnW = W * 0.26;
+    const btnGap = W * 0.04;
+
+    // Botão Compartilhar (aparece aos 15%)
+    if (p > 0.15) {
+      const bP = easeOut(clamp((p - 0.15) / 0.15, 0, 1));
+      const bx = W * 0.05;
+      const pulse = 1 + Math.sin(t * 5) * 0.05;
+      ctx.save();
+      ctx.translate(bx + btnW / 2, btnY + btnH / 2);
+      ctx.scale(bP * pulse, bP * pulse);
+      ctx.translate(-btnW / 2, -btnH / 2);
+      ctx.fillStyle = C.btnYellow;
+      drawRR(ctx, 0, 0, btnW, btnH, 18); ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('↗ COMPARTILHAR', btnW / 2, btnH / 2 + 4);
+      ctx.restore();
+    }
+
+    // Botão Curtir (aparece aos 35%)
+    if (p > 0.35) {
+      const bP = easeOut(clamp((p - 0.35) / 0.15, 0, 1));
+      const bx = W * 0.05 + btnW + btnGap;
+      const bounce = Math.abs(Math.sin(t * 4)) * 3;
+      ctx.save();
+      ctx.translate(bx + btnW / 2, btnY + btnH / 2 - bounce);
+      ctx.scale(bP, bP);
+      ctx.translate(-btnW / 2, -btnH / 2);
+      ctx.fillStyle = C.btnHeart;
+      drawRR(ctx, 0, 0, btnW, btnH, 18); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('❤ CURTIR', btnW / 2, btnH / 2 + 4);
+      ctx.restore();
+    }
+
+    // Botão Seguir (aparece aos 55%)
+    if (p > 0.55) {
+      const bP = easeOut(clamp((p - 0.55) / 0.15, 0, 1));
+      const bx = W * 0.05 + (btnW + btnGap) * 2;
+      const clickP = p > 0.75 ? 0.9 : 1;
+      ctx.save();
+      ctx.translate(bx + btnW / 2, btnY + btnH / 2);
+      ctx.scale(bP * clickP, bP * clickP);
+      ctx.translate(-btnW / 2, -btnH / 2);
+      ctx.fillStyle = p > 0.75 ? '#1aa833' : C.btnFollow;
+      drawRR(ctx, 0, 0, btnW, btnH, 18); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(p > 0.75 ? '✓ SEGUINDO' : '+ SEGUIR', btnW / 2, btnH / 2 + 4);
+      ctx.restore();
+    }
+
+    // Brilho final (últimos 10%)
+    if (p > 0.9) {
+      const fadeP = (p - 0.9) / 0.1;
+      ctx.fillStyle = `rgba(255,255,255,${fadeP * 0.3})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // RENDER PRINCIPAL
+  // ══════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
+  //  MOTOR 3D (Three.js) — texturas procedurais + iluminação PBR
+  //  Renderiza elementos realistas e compõe sobre a cena 2D.
+  // ══════════════════════════════════════════════════════════
+  const T3 = {
+    ready: false,
+    renderer: null,
+    scene: null,
+    camera: null,
+    canvas: null,
+    W: 1080, H: 1920,
+    texCache: {},
+  };
+
+  // ── Texturas procedurais (geradas em canvas offscreen) ──
+  function makeCanvasTex(key, w, h, painter, repeat) {
+    if (T3.texCache[key]) return T3.texCache[key];
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const c = cv.getContext('2d');
+    painter(c, w, h);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    if (repeat) tex.repeat.set(repeat[0], repeat[1]);
+    if ('colorSpace' in tex && THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    T3.texCache[key] = tex;
+    return tex;
+  }
+
+  function noiseFill(c, w, h, base, amp, seed) {
+    c.fillStyle = base; c.fillRect(0, 0, w, h);
+    const img = c.getImageData(0, 0, w, h);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const n = (rand(seed + i * 0.001) - 0.5) * amp;
+      d[i] = clamp(d[i] + n, 0, 255);
+      d[i + 1] = clamp(d[i + 1] + n, 0, 255);
+      d[i + 2] = clamp(d[i + 2] + n, 0, 255);
+    }
+    c.putImageData(img, 0, 0);
+  }
+
+  // Textura: alvenaria sem reboco (tijolos expostos)
+  function texBrick(c, w, h) {
+    c.fillStyle = '#6b5a4a'; c.fillRect(0, 0, w, h);
+    const bw = 64, bh = 28, gap = 4;
+    for (let y = 0, row = 0; y < h; y += bh + gap, row++) {
+      const off = (row % 2) ? bw / 2 : 0;
+      for (let x = -bw; x < w; x += bw + gap) {
+        const shade = 0.75 + rand(x * 0.1 + y) * 0.4;
+        const r = Math.floor(150 * shade), g = Math.floor(80 * shade), b = Math.floor(55 * shade);
+        c.fillStyle = `rgb(${r},${g},${b})`;
+        c.fillRect(x + off, y, bw, bh);
+        c.fillStyle = `rgba(0,0,0,${0.15 + rand(x + y) * 0.15})`;
+        c.fillRect(x + off, y + bh - 3, bw, 3);
+      }
+    }
+    // manchas de umidade
+    for (let i = 0; i < 40; i++) {
+      const x = rand(i * 3.1) * w, y = rand(i * 7.7) * h, r = 10 + rand(i) * 40;
+      const g = c.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, 'rgba(40,50,35,0.25)');
+      g.addColorStop(1, 'rgba(40,50,35,0)');
+      c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill();
+    }
+  }
+
+  // Textura: piso de cimento queimado
+  function texConcrete(c, w, h) {
+    noiseFill(c, w, h, '#8a8580', 40, 3.3);
+    for (let i = 0; i < 30; i++) {
+      const x = rand(i * 5.5) * w, y = rand(i * 2.2) * h, r = 20 + rand(i) * 60;
+      const g = c.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, 'rgba(60,58,55,0.18)');
+      g.addColorStop(1, 'rgba(60,58,55,0)');
+      c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill();
+    }
+  }
+
+  // Textura: terra vermelha de minério
+  function texDirt(c, w, h) {
+    noiseFill(c, w, h, '#a85a30', 55, 9.1);
+    for (let i = 0; i < 120; i++) {
+      const x = rand(i * 1.7) * w, y = rand(i * 4.3) * h, r = 2 + rand(i) * 8;
+      c.fillStyle = `rgba(${120 + rand(i) * 60},${50 + rand(i) * 30},20,0.4)`;
+      c.beginPath(); c.arc(x, y, r, 0, 7); c.fill();
+    }
+  }
+
+  // Textura: metal escovado (inox/torneira)
+  function texMetal(c, w, h) {
+    noiseFill(c, w, h, '#b8b8b8', 30, 1.1);
+    for (let i = 0; i < 200; i++) {
+      const y = rand(i * 2.9) * h;
+      c.strokeStyle = `rgba(255,255,255,${rand(i) * 0.15})`;
+      c.lineWidth = 1;
+      c.beginPath(); c.moveTo(0, y); c.lineTo(w, y + (rand(i) - 0.5) * 4); c.stroke();
+    }
+  }
+
+  // Textura: ferrugem
+  function texRust(c, w, h) {
+    noiseFill(c, w, h, '#8B4513', 60, 6.6);
+    for (let i = 0; i < 80; i++) {
+      const x = rand(i * 3.3) * w, y = rand(i * 8.8) * h, r = 4 + rand(i) * 20;
+      const g = c.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, `rgba(${150 + rand(i) * 50},${60 + rand(i) * 30},20,0.6)`);
+      g.addColorStop(1, 'rgba(120,50,20,0)');
+      c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill();
+    }
+  }
+
+  // Textura: ouro polido
+  function texGold(c, w, h) {
+    const g = c.createLinearGradient(0, 0, w, h);
+    g.addColorStop(0, '#ffe680'); g.addColorStop(0.5, '#ffd700'); g.addColorStop(1, '#cc9900');
+    c.fillStyle = g; c.fillRect(0, 0, w, h);
+    for (let i = 0; i < 60; i++) {
+      c.strokeStyle = `rgba(255,255,220,${rand(i) * 0.3})`;
+      c.beginPath(); c.moveTo(rand(i) * w, 0); c.lineTo(rand(i * 2) * w, h); c.stroke();
+    }
+  }
+
+  function init3D() {
+    if (T3.ready) return true;
+    if (typeof THREE === 'undefined') return false;
+    try {
+      T3.canvas = document.createElement('canvas');
+      T3.canvas.width = T3.W; T3.canvas.height = T3.H;
+      T3.renderer = new THREE.WebGLRenderer({ canvas: T3.canvas, antialias: true, alpha: true });
+      T3.renderer.setSize(T3.W, T3.H, false);
+      T3.renderer.setPixelRatio(1);
+      T3.renderer.shadowMap.enabled = true;
+      if ('toneMapping' in T3.renderer) {
+        T3.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        T3.renderer.toneMappingExposure = 1.15;
+      }
+      if ('outputColorSpace' in T3.renderer && THREE.SRGBColorSpace) {
+        T3.renderer.outputColorSpace = THREE.SRGBColorSpace;
+      }
+      T3.scene = new THREE.Scene();
+      T3.camera = new THREE.PerspectiveCamera(42, T3.W / T3.H, 0.1, 200);
+      // Monitora perda de contexto WebGL (comum em GPUs móveis com pouca memória)
+      T3.contextLost = false;
+      T3.canvas.addEventListener('webglcontextlost', (ev) => {
+        ev.preventDefault();
+        T3.contextLost = true;
+        console.warn('CanaaRenderer: contexto WebGL perdido, usando fallback 2D.');
+      }, false);
+      T3.canvas.addEventListener('webglcontextrestored', () => {
+        T3.contextLost = false;
+        console.warn('CanaaRenderer: contexto WebGL restaurado.');
+      }, false);
+      T3.ready = true;
+      return true;
+    } catch (e) {
+      console.warn('CanaaRenderer 3D indisponível:', e);
+      return false;
+    }
+  }
+
+  function clearScene3D() {
+    if (!T3.scene) return;
+    const disposeObj = (o) => {
+      if (!o) return;
+      if (o.geometry && o.geometry.dispose) o.geometry.dispose();
+      if (o.material) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of mats) {
+          if (!m) continue;
+          for (const key of ['map', 'normalMap', 'emissiveMap', 'roughnessMap', 'metalnessMap', 'alphaMap', 'bumpMap', 'aoMap']) {
+            const tex = m[key];
+            if (tex && tex.dispose) { try { tex.dispose(); } catch (e) { /* ignore */ } }
+          }
+          if (m.dispose) m.dispose();
+        }
+      }
+      if (o.children && o.children.length) o.children.slice().forEach(disposeObj);
+    };
+    while (T3.scene.children.length) {
+      const o = T3.scene.children.pop();
+      disposeObj(o);
+    }
+    if (T3.texCache && typeof T3.texCache === 'object') {
+      for (const k in T3.texCache) {
+        const tex = T3.texCache[k];
+        if (tex && tex.dispose) { try { tex.dispose(); } catch (e) { /* ignore */ } }
+      }
+      T3.texCache = {};
+    }
+  }
+
+  function addLights(amb, key, keyPos, fill, fillPos, rim, rimPos) {
+    T3.scene.add(new THREE.AmbientLight(amb, 0.9));
+    const k = new THREE.DirectionalLight(key, 2.2);
+    k.position.set(keyPos[0], keyPos[1], keyPos[2]);
+    k.castShadow = true;
+    k.shadow.mapSize.set(1024, 1024);
+    T3.scene.add(k);
+    const f = new THREE.DirectionalLight(fill, 0.9);
+    f.position.set(fillPos[0], fillPos[1], fillPos[2]);
+    T3.scene.add(f);
+    const r = new THREE.DirectionalLight(rim, 1.2);
+    r.position.set(rimPos[0], rimPos[1], rimPos[2]);
+    T3.scene.add(r);
+  }
+
+  // ── Cena 1: torneira metálica + pia de inox (close-up) ──
+  // ── Pessoa 3D (cabeça, tronco, braços, pernas, galão opcional) ──
+  function makePerson(opts) {
+    opts = opts || {};
+    const skin = opts.skin || 0xd4a574;
+    const shirt = opts.shirt || 0x556677;
+    const pants = opts.pants || 0x333344;
+    const g = new THREE.Group();
+    const skinMat = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.8 });
+    const shirtMat = new THREE.MeshStandardMaterial({ color: shirt, roughness: 0.9 });
+    const pantsMat = new THREE.MeshStandardMaterial({ color: pants, roughness: 0.9 });
+
+    // pernas
+    for (let s = -1; s <= 1; s += 2) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.08, 0.85, 10), pantsMat);
+      leg.position.set(s * 0.12, 0.42, 0); leg.castShadow = true;
+      g.add(leg);
+    }
+    // tronco
+    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.75, 12), shirtMat);
+    torso.position.y = 1.2; torso.castShadow = true;
+    g.add(torso);
+    // cabeça
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 16, 16), skinMat);
+    head.position.y = 1.82; head.castShadow = true;
+    g.add(head);
+    // braços
+    const armL = new THREE.Group();
+    const armR = new THREE.Group();
+    for (const [grp, s] of [[armL, -1], [armR, 1]]) {
+      const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.7, 10), shirtMat);
+      arm.position.y = -0.35; arm.castShadow = true;
+      grp.add(arm);
+      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 10), skinMat);
+      hand.position.y = -0.72;
+      grp.add(hand);
+      grp.position.set(s * 0.24, 1.5, 0);
+      g.add(grp);
+    }
+    g.userData = { armL, armR };
+
+    // galão nas mãos (opcional)
+    if (opts.bucket) {
+      const bMat = new THREE.MeshStandardMaterial({ color: opts.bucket, roughness: 0.4 });
+      const bucket = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.34, 14), bMat);
+      bucket.position.set(0, 0.95, 0.32); bucket.castShadow = true;
+      g.add(bucket);
+      // braços estendidos para frente segurando o galão
+      armL.rotation.x = -1.2; armR.rotation.x = -1.2;
+    } else {
+      armL.rotation.x = -0.3; armR.rotation.x = -0.3;
+    }
+    // curvatura de exaustão (opcional)
+    if (opts.hunch) g.rotation.x = opts.hunch;
+    return g;
+  }
+
+
+  function buildScene1_3D(t, dur) {
+    const p = clamp(t / dur, 0, 1);
+    addLights(0x8899aa, 0xfff2d0, [3, 6, 4], 0x88aacc, [-4, 2, 3], 0xffffff, [0, 4, -6]);
+
+    const metalMat = new THREE.MeshStandardMaterial({
+      map: makeCanvasTex('metal', 256, 256, texMetal, [2, 2]),
+      metalness: 0.95, roughness: 0.35, color: 0xcccccc,
+    });
+    const rustMat = new THREE.MeshStandardMaterial({
+      map: makeCanvasTex('rust', 256, 256, texRust, [2, 2]),
+      metalness: 0.6, roughness: 0.85,
+    });
+
+    // Torneira: corpo cilíndrico + bica curva
+    const faucet = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 1.4, 24), metalMat);
+    body.position.y = 0.7; body.castShadow = true;
+    faucet.add(body);
+    const spout = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.14, 16, 32, Math.PI * 0.9), metalMat);
+    spout.position.set(0, 1.4, 0.35); spout.rotation.x = Math.PI / 2; spout.castShadow = true;
+    faucet.add(spout);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.05, 12, 24), rustMat);
+    ring.position.y = 0.15; ring.rotation.x = Math.PI / 2;
+    faucet.add(ring);
+    faucet.position.set(0, 0, 0);
+    T3.scene.add(faucet);
+
+    // Pia de inox (base)
+    const sink = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.3, 2.2), metalMat);
+    sink.position.set(0, -0.15, 0.3); sink.receiveShadow = true;
+    T3.scene.add(sink);
+
+    // Ambientação: parede de alvenaria, balcão de cimento, filtro de barro e louça
+    const wallMat = new THREE.MeshStandardMaterial({
+      map: makeCanvasTex('brick', 256, 256, texBrick, [4, 4]), roughness: 0.95,
+    });
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(18, 11), wallMat);
+    wall.position.set(0, 3.2, -3.4); wall.receiveShadow = true;
+    T3.scene.add(wall);
+
+    const ceramicMat = new THREE.MeshStandardMaterial({
+      map: makeCanvasTex('concrete', 256, 256, texConcrete, [2, 2]), roughness: 0.6, metalness: 0.05, color: 0xbfae94,
+    });
+    const counter = new THREE.Mesh(new THREE.BoxGeometry(7.5, 0.35, 3.4), ceramicMat);
+    counter.position.set(0, -0.2, 0.2); counter.receiveShadow = true; counter.castShadow = true;
+    T3.scene.add(counter);
+
+    const filter = new THREE.Group();
+    const filterBody = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.5, 0.9, 24), ceramicMat);
+    filterBody.position.y = 0.45; filterBody.castShadow = true; filter.add(filterBody);
+    const filterLid = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.42, 0.12, 24), ceramicMat);
+    filterLid.position.y = 0.95; filter.add(filterLid);
+    const filterTap = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.3, 10), metalMat);
+    filterTap.position.set(0.42, 0.35, 0); filterTap.rotation.z = Math.PI / 2; filter.add(filterTap);
+    filter.position.set(-2.9, -0.02, 0.4);
+    T3.scene.add(filter);
+
+    for (let i = 0; i < 4; i++) {
+      const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.05, 20), ceramicMat);
+      plate.position.set(2.6, 0.05 + i * 0.07, 0.3); plate.castShadow = true;
+      T3.scene.add(plate);
+    }
+
+    // Gota d'água animada
+    const dropMat = new THREE.MeshStandardMaterial({ color: 0x66ccff, metalness: 0.1, roughness: 0.05, transparent: true, opacity: 0.85 });
+    const drop = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 12), dropMat);
+    const dropPhase = (t * 1.2) % 1;
+    drop.position.set(0, 1.0 - dropPhase * 1.0, 0.55);
+    drop.scale.y = 1.4;
+    T3.scene.add(drop);
+
+
+    // Morador tentando abrir a torneira (braço esticado girando o registro)
+    const person = makePerson({ shirt: 0x7a4a2a, pants: 0x2a2a33, skin: 0xc99a6a });
+    person.position.set(0.55, 0, 1.5);
+    person.rotation.y = Math.PI + 0.35;
+    const reach = Math.sin(t * 8) * 0.15;
+    person.userData.armR.rotation.x = -1.5 + reach;
+    person.userData.armR.rotation.z = 0.4;
+    T3.scene.add(person);
+
+    // Câmera close-up com leve recuo
+    // Câmera em plano mais aberto: recuo contínuo atravessando a cozinha
+    // Câmera cinematográfica com keyframes (movimento suave de aproximação + leve órbita)
+    const chaves = [
+      K(0, [0.2, 1.0, 0.4], 8, 10, 8.5, 42),
+      K(dur * 0.5, [0.2, 1.0, 0.4], 16, 11, 7.2, 44),
+      K(dur, [0.2, 1.0, 0.4], 24, 12, 6.2, 46),
+    ];
+    applyCam(T3.camera, camera(chaves, t));
+  }
+
+  // ── Cena 2: caminhão fora-de-estrada + minério ──
+  function buildScene2_3D(t, dur) {
+    const p = clamp(t / dur, 0, 1);
+    addLights(0xbfd8ff, 0xfff6e0, [8, 14, 6], 0x88aaff, [-8, 6, -4], 0xffffff, [0, 8, -12]);
+
+    const dirtMat = new THREE.MeshStandardMaterial({
+      map: makeCanvasTex('dirt', 256, 256, texDirt, [6, 6]), roughness: 1.0, metalness: 0.0,
+    });
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), dirtMat);
+    ground.rotation.x = -Math.PI / 2; ground.position.y = 0; ground.receiveShadow = true;
+    T3.scene.add(ground);
+
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0xe8b400, metalness: 0.5, roughness: 0.5 });
+    const tireMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9 });
+    const oreMat = new THREE.MeshStandardMaterial({
+      map: makeCanvasTex('ore', 128, 128, (c, w, h) => noiseFill(c, w, h, '#7a3a18', 70, 4.4), [3, 3]),
+      roughness: 0.95,
+    });
+
+    // Caminhão gigante
+    const truck = new THREE.Group();
+    const chassis = new THREE.Mesh(new THREE.BoxGeometry(4, 1.2, 2.4), bodyMat);
+    chassis.position.y = 0.6; chassis.castShadow = true;
+    truck.add(chassis);
+    const bed = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.6, 2.2), bodyMat);
+    bed.position.set(-0.2, 2.0, 0); bed.castShadow = true;
+    truck.add(bed);
+    // Cabine do motorista
+    const cabMat = new THREE.MeshStandardMaterial({ color: 0xd8a400, metalness: 0.5, roughness: 0.5 });
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.4, 2.0), cabMat);
+    cab.position.set(2.4, 1.5, 0); cab.castShadow = true;
+    truck.add(cab);
+    const cabGlass = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.7, 1.7),
+      new THREE.MeshStandardMaterial({ color: 0x223344, metalness: 0.9, roughness: 0.1 }));
+    cabGlass.position.set(3.06, 1.7, 0); truck.add(cabGlass);
+    // Faróis
+    for (let s = -1; s <= 1; s += 2) {
+      const light = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.1, 12),
+        new THREE.MeshStandardMaterial({ color: 0xfff2c0, emissive: 0xffdd88, emissiveIntensity: 0.6 }));
+      light.rotation.z = Math.PI / 2; light.position.set(3.08, 1.1, s * 0.7);
+      truck.add(light);
+    }
+    // Escapamento vertical
+    const exhaust = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 2.2, 12),
+      new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.8, roughness: 0.5 }));
+    exhaust.position.set(1.9, 2.2, 1.05); truck.add(exhaust);
+    // minério na caçamba
+    for (let i = 0; i < 14; i++) {
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.28 + rand(i) * 0.2), oreMat);
+      rock.position.set(-1.6 + rand(i * 2) * 3, 2.9 + rand(i * 3) * 0.3, (rand(i * 5) - 0.5) * 1.6);
+      rock.rotation.set(rand(i) * 3, rand(i * 2) * 3, rand(i * 3) * 3);
+      rock.castShadow = true;
+      truck.add(rock);
+    }
+    // rodas gigantes
+    const wheelPos = [[-1.4, 1.0], [1.4, 1.0]];
+    wheelPos.forEach(([wx, wy]) => {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, 0.7, 24), tireMat);
+      wheel.rotation.x = Math.PI / 2; wheel.position.set(wx, wy, 1.3); wheel.castShadow = true;
+      truck.add(wheel);
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.75, 16),
+        new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.8, roughness: 0.4 }));
+      hub.rotation.x = Math.PI / 2; hub.position.set(wx, wy, 1.3); truck.add(hub);
+      const wheel2 = wheel.clone(); wheel2.position.z = -1.3; truck.add(wheel2);
+      const hub2 = hub.clone(); hub2.position.z = -1.3; truck.add(hub2);
+    });
+    // movimento lateral do caminhão
+    truck.position.set(lerp(-9, 9, p), 0, 0);
+    truck.rotation.y = -0.15;
+    T3.scene.add(truck);
+
+    // esteiras rolantes ao fundo
+    const beltMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.6, roughness: 0.5 });
+    for (let i = 0; i < 3; i++) {
+      const belt = new THREE.Mesh(new THREE.BoxGeometry(30, 0.4, 1.2), beltMat);
+      belt.position.set(0, 1 + i * 1.5, -12 - i * 3);
+      belt.rotation.z = 0.12;
+      T3.scene.add(belt);
+    }
+
+    // câmera aérea descendo (crane)
+    // Crane shot: câmera aérea descendo e orbitando (keyframes cinematográficos)
+    const chaves = [
+      K(0, [0, 1.5, 0], -18, 11, 23, 40),
+      K(dur * 0.45, [0, 1.5, 0], 0, 9, 21, 42),
+      K(dur, [0, 1.5, 0], 18, 8, 18, 44),
+    ];
+    applyCam(T3.camera, camera(chaves, t));
+  }
+
+  // ── Cena 3: caminhão-pipa enferrujado na rua de terra ──
+  function buildScene3_3D(t, dur) {
+    const p = clamp(t / dur, 0, 1);
+    addLights(0xffe0a0, 0xfff0c0, [6, 12, 4], 0xffaa66, [-6, 4, 2], 0xffffff, [0, 6, -10]);
+
+    const dirtMat = new THREE.MeshStandardMaterial({
+      map: makeCanvasTex('dirt', 256, 256, texDirt, [8, 8]), roughness: 1.0,
+    });
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), dirtMat);
+    ground.rotation.x = -Math.PI / 2; ground.position.y = 0; ground.receiveShadow = true;
+    T3.scene.add(ground);
+
+    const rustMat = new THREE.MeshStandardMaterial({
+      map: makeCanvasTex('rust', 256, 256, texRust, [3, 3]), metalness: 0.5, roughness: 0.9,
+    });
+    const tireMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.95 });
+
+    const pipa = new THREE.Group();
+    const chassis = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.5, 2.0), rustMat);
+    chassis.position.y = 0.9; chassis.castShadow = true; pipa.add(chassis);
+    const tank = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 4.5, 24), rustMat);
+    tank.rotation.z = Math.PI / 2; tank.position.y = 1.9; tank.castShadow = true;
+    pipa.add(tank);
+    for (let i = -1; i <= 1; i++) {
+      const hatch = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.12, 16),
+        new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.7, roughness: 0.6 }));
+      hatch.position.set(i * 1.4, 3.0, 0); pipa.add(hatch);
+    }
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.4, 1.8), rustMat);
+    cab.position.set(2.6, 1.0, 0); cab.castShadow = true;
+    pipa.add(cab);
+    const cabGlass = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.7, 1.6),
+      new THREE.MeshStandardMaterial({ color: 0x223344, metalness: 0.9, roughness: 0.1 }));
+    cabGlass.position.set(3.36, 1.25, 0); pipa.add(cabGlass);
+    for (let s = -1; s <= 1; s += 2) {
+      const light = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.1, 12),
+        new THREE.MeshStandardMaterial({ color: 0xfff2c0, emissive: 0xffdd88, emissiveIntensity: 0.5 }));
+      light.rotation.z = Math.PI / 2; light.position.set(3.38, 0.85, s * 0.6); pipa.add(light);
+    }
+    const bumper = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.4, 2.0), rustMat);
+    bumper.position.set(3.45, 0.6, 0); pipa.add(bumper);
+    [[-1.8, 0.7], [1.8, 0.7]].forEach(([wx, wy]) => {
+      const w = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.45, 20), tireMat);
+      w.rotation.x = Math.PI / 2; w.position.set(wx, wy, 1.05); w.castShadow = true;
+      pipa.add(w);
+      const w2 = w.clone(); w2.position.z = -1.05; pipa.add(w2);
+    });
+    // aproximação + freada
+    const approach = easeOut(clamp(p / 0.7, 0, 1));
+    pipa.position.set(lerp(-14, -1, approach), 0, 0);
+    pipa.rotation.y = 0.1;
+    T3.scene.add(pipa);
+
+    // Pessoas na beira da rua observando o caminhão-pipa
+    const crowd = [
+      { x: 3.5, z: 2.5, shirt: 0x8a3a2a, pants: 0x3a3a44, bucket: 0xffcc00 },
+      { x: 4.6, z: 3.4, shirt: 0x4a6a8a, pants: 0x2a2a33, bucket: 0x2266cc },
+      { x: 2.8, z: 4.0, shirt: 0x6a6a4a, pants: 0x443a2a, bucket: 0xeeeeee },
+    ];
+    crowd.forEach((c, i) => {
+      const per = makePerson({ shirt: c.shirt, pants: c.pants, bucket: c.bucket, hunch: 0.08 });
+      per.position.set(c.x, 0, c.z);
+      per.rotation.y = -0.6 - i * 0.15;
+      T3.scene.add(per);
+    });
+
+    // nuvem de poeira (partículas)
+    const dustGeo = new THREE.BufferGeometry();
+    const N = 120, pos = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      pos[i * 3] = (rand(i) - 0.5) * 8;
+      pos[i * 3 + 1] = rand(i * 2) * 3;
+      pos[i * 3 + 2] = (rand(i * 3) - 0.5) * 4;
+    }
+    dustGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const dustMat = new THREE.PointsMaterial({ color: 0xcc8844, size: 0.35, transparent: true, opacity: 0.5 * approach });
+    T3.scene.add(new THREE.Points(dustGeo, dustMat));
+
+    // Câmera aproximando do caminhão-pipa que freia (keyframes)
+    const chaves = [
+      K(0, [0, 1.3, 0], -16, 10, 22, 40),
+      K(dur * 0.5, [0, 1.3, 0], 0, 8, 18, 42),
+      K(dur, [0, 1.3, 0], 16, 7, 15, 44),
+    ];
+    applyCam(T3.camera, camera(chaves, t));
+  }
+
+  // ── Cena 4A: torneiras improvisadas + galões ──
+  function buildScene4A_3D(t, subDur, p) {
+    addLights(0xffddaa, 0xfff0d0, [5, 10, 5], 0xffaa66, [-5, 3, 3], 0xffffff, [0, 5, -8]);
+
+    const dirtMat = new THREE.MeshStandardMaterial({
+      map: makeCanvasTex('dirt', 256, 256, texDirt, [6, 6]), roughness: 1.0,
+    });
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), dirtMat);
+    ground.rotation.x = -Math.PI / 2; ground.position.y = 0; ground.receiveShadow = true;
+    T3.scene.add(ground);
+
+    const rustMat = new THREE.MeshStandardMaterial({
+      map: makeCanvasTex('rust', 256, 256, texRust, [3, 3]), metalness: 0.5, roughness: 0.9,
+    });
+    const metalMat = new THREE.MeshStandardMaterial({
+      map: makeCanvasTex('metal', 256, 256, texMetal, [2, 2]), metalness: 0.9, roughness: 0.4,
+    });
+
+    // carroceria do caminhão-pipa
+    const truckBed = new THREE.Mesh(new THREE.BoxGeometry(6, 2.4, 2.4), rustMat);
+    truckBed.position.set(0, 1.2, -2); truckBed.castShadow = true;
+    T3.scene.add(truckBed);
+
+    // torneiras improvisadas gotejando
+    for (let i = 0; i < 4; i++) {
+      const tap = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.5, 12), metalMat);
+      tap.position.set(-2.2 + i * 1.5, 0.4, -0.8);
+      tap.rotation.x = Math.PI / 2;
+      T3.scene.add(tap);
+      const dripPhase = (t * (1 + i * 0.3)) % 1;
+      const drip = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 8),
+        new THREE.MeshStandardMaterial({ color: 0x66ccff, transparent: true, opacity: 0.8, roughness: 0.05 }));
+      drip.position.set(-2.2 + i * 1.5, 0.3 - dripPhase * 1.2, -0.6);
+      T3.scene.add(drip);
+    }
+
+    // galões plásticos enfileirados
+    const galaoColors = [0xffcc00, 0x2266cc, 0xeeeeee, 0xffcc00, 0x2266cc];
+    galaoColors.forEach((col, i) => {
+      const mat = new THREE.MeshStandardMaterial({ color: col, roughness: 0.4, metalness: 0.05 });
+      const g = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.36, 0.9, 16), mat);
+      g.position.set(-2.4 + i * 1.2, 0.45, 1.5 + (i % 2) * 0.4);
+      g.castShadow = true;
+      T3.scene.add(g);
+    });
+
+    // Famílias carregando galões (exaustas, curvadas)
+    const queue = [
+      { x: -2.0, z: 2.6, shirt: 0x8a4a2a, pants: 0x3a3a44, bucket: 0xffcc00, hunch: 0.18 },
+      { x: -0.4, z: 3.2, shirt: 0x4a6a8a, pants: 0x2a2a33, bucket: 0x2266cc, hunch: 0.12 },
+      { x: 1.2, z: 2.8, shirt: 0x6a6a4a, pants: 0x443a2a, bucket: 0xeeeeee, hunch: 0.22 },
+      { x: 2.6, z: 3.6, shirt: 0x7a3a3a, pants: 0x333333, bucket: 0xffcc00, hunch: 0.15 },
+    ];
+    queue.forEach((q, i) => {
+      const per = makePerson({ shirt: q.shirt, pants: q.pants, bucket: q.bucket, hunch: q.hunch });
+      per.position.set(q.x, 0, q.z);
+      per.rotation.y = Math.PI + (i - 1.5) * 0.12;
+      T3.scene.add(per);
+    });
+
+    // Câmera lateral deslizando sobre a fila de galões (keyframes)
+    const chaves = [
+      K(0, [0, 1.0, 0.5], -14, 9, 12, 42),
+      K(subDur * 0.5, [0, 1.0, 0.5], 0, 7, 10.5, 44),
+      K(subDur, [0, 1.0, 0.5], 14, 6, 9.5, 46),
+    ];
+    applyCam(T3.camera, camera(chaves, t));
+  }
+
+  // ── Cena 4B: bacia dourada + mãos lavando ──
+  function buildScene4B_3D(t, subDur, p) {
+    addLights(0x445566, 0xfff0d0, [4, 8, 4], 0x88aaff, [-4, 3, 3], 0xffddaa, [0, 4, -6]);
+
+    const goldMat = new THREE.MeshStandardMaterial({
+      map: makeCanvasTex('gold', 256, 256, texGold, [2, 2]), metalness: 1.0, roughness: 0.15,
+    });
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x5C3317, roughness: 0.4, metalness: 0.1 });
+
+    // mesa de mogno
+    const table = new THREE.Mesh(new THREE.BoxGeometry(6, 0.3, 3), woodMat);
+    table.position.y = -0.15; table.receiveShadow = true;
+    T3.scene.add(table);
+    const leatherMat = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.35, metalness: 0.1 });
+    for (let i = -1; i <= 1; i++) {
+      const chair = new THREE.Group();
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.2, 0.9), leatherMat);
+      seat.position.y = 0.5; seat.castShadow = true; chair.add(seat);
+      const back = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.0, 0.2), leatherMat);
+      back.position.set(0, 1.0, -0.35); back.castShadow = true; chair.add(back);
+      chair.position.set(i * 2.0, 0, -2.2);
+      T3.scene.add(chair);
+    }
+    const blindMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.8 });
+    for (let i = 0; i < 8; i++) {
+      const slat = new THREE.Mesh(new THREE.BoxGeometry(7, 0.12, 0.05), blindMat);
+      slat.position.set(0, 1.2 + i * 0.28, -4.0); T3.scene.add(slat);
+    }
+    const folderMat = new THREE.MeshStandardMaterial({ color: 0xd8c9a0, roughness: 0.7 });
+    const folder = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.04, 0.7), folderMat);
+    folder.position.set(1.6, 0.02, 0.4); folder.rotation.y = 0.3; T3.scene.add(folder);
+
+    // bacia dourada
+    const basin = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 0.8, 0.5, 32), goldMat);
+    basin.position.set(0, 0.25, 0); basin.castShadow = true;
+    T3.scene.add(basin);
+    // água na bacia
+    const water = new THREE.Mesh(new THREE.CylinderGeometry(0.92, 0.92, 0.05, 32),
+      new THREE.MeshStandardMaterial({ color: 0x66ccff, metalness: 0.1, roughness: 0.05, transparent: true, opacity: 0.8 }));
+    water.position.set(0, 0.48, 0);
+    T3.scene.add(water);
+
+    // mãos (formas simples) mergulhando
+    const skinMat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7 });
+    const handDip = Math.sin(clamp(p, 0, 1) * Math.PI) * 0.3;
+    for (let s = -1; s <= 1; s += 2) {
+      const hand = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.15, 0.6), skinMat);
+      hand.position.set(s * 0.35, 0.55 - handDip, 0.1);
+      hand.rotation.z = s * 0.2;
+      hand.castShadow = true;
+      T3.scene.add(hand);
+    }
+
+    // Câmera na sala de reuniões, leve aproximação (keyframes)
+    const chaves = [
+      K(0, [0, 0.6, 0], -8, 12, 9.5, 40),
+      K(subDur, [0, 0.4, 0], 8, 10, 8.2, 43),
+    ];
+    applyCam(T3.camera, camera(chaves, t));
+  }
+
+  // ── Cena 5: balança da justiça com ouro vs torneira seca ──
+  function buildScene5_3D(t, dur) {
+    const p = clamp(t / dur, 0, 1);
+    addLights(0x223355, 0xffffff, [4, 8, 6], 0x4466aa, [-4, 4, 3], 0x88aaff, [0, 5, -8]);
+
+    const metalMat = new THREE.MeshStandardMaterial({
+      map: makeCanvasTex('metal', 256, 256, texMetal, [2, 2]), metalness: 0.85, roughness: 0.45, color: 0x9a8a6a,
+    });
+    const goldMat = new THREE.MeshStandardMaterial({
+      map: makeCanvasTex('gold', 256, 256, texGold, [2, 2]), metalness: 1.0, roughness: 0.15,
+    });
+
+    // pilar central
+    const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.2, 5, 20), metalMat);
+    pillar.position.y = 2.5; pillar.castShadow = true;
+    T3.scene.add(pillar);
+    // travessão
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(6, 0.2, 0.2), metalMat);
+    beam.position.y = 5; beam.castShadow = true;
+    T3.scene.add(beam);
+
+    // inclinação: prato esquerdo (ouro) desce, direito (torneira) sobe
+    const tilt = easeInOut(clamp(p / 0.7, 0, 1)) * 0.5;
+    // prato esquerdo com sacos de ouro
+    const leftPan = new THREE.Group();
+    const panL = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.0, 0.15, 24), metalMat);
+    leftPan.add(panL);
+    for (let i = 0; i < 16; i++) {
+      const sack = new THREE.Mesh(new THREE.SphereGeometry(0.28 + rand(i) * 0.16, 12, 12), goldMat);
+      sack.position.set((rand(i) - 0.5) * 1.6, 0.3 + rand(i * 2) * 0.55, (rand(i * 3) - 0.5) * 1.2);
+      sack.castShadow = true;
+      leftPan.add(sack);
+    }
+    leftPan.position.set(-3, 5 - tilt * 3, 0);
+    T3.scene.add(leftPan);
+
+    // prato direito com torneira seca
+    const rightPan = new THREE.Group();
+    const panR = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.0, 0.15, 24), metalMat);
+    rightPan.add(panR);
+    const dryTap = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.0, 12),
+      new THREE.MeshStandardMaterial({ map: makeCanvasTex('rust', 256, 256, texRust, [2, 2]), metalness: 0.5, roughness: 0.9 }));
+    dryTap.position.y = 0.6; dryTap.rotation.z = 0.3;
+    rightPan.add(dryTap);
+    const tapSpout = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.45, 12),
+      new THREE.MeshStandardMaterial({ color: 0x5a4a3a, metalness: 0.6, roughness: 0.8 }));
+    tapSpout.position.set(0.3, 0.9, 0); tapSpout.rotation.z = -1.2;
+    rightPan.add(tapSpout);
+    const dryBucket = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.25, 0.5, 16),
+      new THREE.MeshStandardMaterial({ color: 0x3a4555, metalness: 0.7, roughness: 0.6 }));
+    dryBucket.position.set(-0.35, 0.25, 0.2);
+    rightPan.add(dryBucket);
+    rightPan.position.set(3, 5 + tilt * 3, 0);
+    T3.scene.add(rightPan);
+
+    // Câmera frontal na balança, leve órbita revelando os pratos (keyframes)
+    const chaves = [
+      K(0, [0, 4, 0], -8, 10, 26, 40),
+      K(dur * 0.5, [0, 4, 0], 6, 9, 25, 42),
+      K(dur, [0, 4, 0], 15, 8, 23, 44),
+    ];
+    applyCam(T3.camera, camera(chaves, t));
+  }
+
+  // ── Cena 6: mapa do Pará + ponto de interrogação ──
+  function buildScene6_3D(t, dur) {
+    const p = clamp(t / dur, 0, 1);
+    addLights(0x223355, 0x88aaff, [4, 8, 6], 0x4466aa, [-4, 4, 3], 0xffffff, [0, 5, -8]);
+
+    // plano do mapa com textura escura
+    const mapMat = new THREE.MeshStandardMaterial({
+      color: 0x0a1628, metalness: 0.3, roughness: 0.7,
+    });
+    const mapPlane = new THREE.Mesh(new THREE.PlaneGeometry(8, 10), mapMat);
+    mapPlane.position.set(0, 0, -2);
+    T3.scene.add(mapPlane);
+
+    // contorno luminoso de Canaã (anel)
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(1.2, 0.06, 12, 48),
+      new THREE.MeshStandardMaterial({ color: 0x2266cc, emissive: 0x2266cc, emissiveIntensity: 1.5, metalness: 0.5, roughness: 0.3 }));
+    ring.position.set(0, 0.5, -1.9);
+    T3.scene.add(ring);
+
+    // ponto de interrogação 3D pulsante (feito de torus + esfera)
+    const qMat = new THREE.MeshStandardMaterial({ color: 0xff2244, emissive: 0xff2244, emissiveIntensity: 1.2, metalness: 0.4, roughness: 0.3 });
+    const qGroup = new THREE.Group();
+    const qArc = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.18, 16, 32, Math.PI * 1.4), qMat);
+    qArc.rotation.z = -0.4;
+    qGroup.add(qArc);
+    const qDot = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 16), qMat);
+    qDot.position.set(0, -1.0, 0);
+    qGroup.add(qDot);
+    const pulse = 1 + Math.sin(t * 4) * 0.12;
+    qGroup.scale.set(pulse, pulse, pulse);
+    qGroup.position.set(0, 0.5, -1.5);
+    T3.scene.add(qGroup);
+
+    // Zoom-out rápido final (keyframes cinematográficos)
+    const chaves = [
+      K(0, [0, 0.4, -2], 0, 6, 11, 40),
+      K(dur * 0.6, [0, 0.4, -2], 0, 5, 15, 42),
+      K(dur, [0, 0.3, -2], 0, 4, 18, 44),
+    ];
+    applyCam(T3.camera, camera(chaves, t));
+  }
+
+  // Céu opaco 3D (gradiente) — garante que o 3D cubra o fundo 2D antigo
+  function addSky3D(topColor, botColor) {
+    const geo = new THREE.SphereGeometry(90, 24, 16);
+    const mat = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      uniforms: {
+        top: { value: new THREE.Color(topColor) },
+        bot: { value: new THREE.Color(botColor) },
+      },
+      vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+      fragmentShader: 'uniform vec3 top; uniform vec3 bot; varying vec3 vP; void main(){ float h = normalize(vP).y * 0.5 + 0.5; gl_FragColor = vec4(mix(bot, top, smoothstep(0.35, 0.75, h)), 1.0); }',
+    });
+    const sky = new THREE.Mesh(geo, mat);
+    sky.frustumCulled = false;
+    T3.scene.add(sky);
+  }
+
+  function render3D(sceneIndex, t, dur, subP, outW, outH) {
+    if (!init3D()) return false;
+    // Sincroniza o buffer 3D com o canvas de saída (evita esticar/achatar a imagem).
+    const wRef = outW || T3.W;
+    const hRef = outH || T3.H;
+    if (T3.W !== wRef || T3.H !== hRef) {
+      T3.W = wRef; T3.H = hRef;
+      T3.canvas.width = T3.W; T3.canvas.height = T3.H;
+      T3.renderer.setSize(T3.W, T3.H, false);
+      T3.camera.aspect = T3.W / T3.H;
+      T3.camera.updateProjectionMatrix();
+    }
+    clearScene3D();
+    // Céu opaco por cena (o 3D é o fundo principal; o 2D vira overlay de gráficos)
+    const skies = [
+      [0x9fc4e8, 0xdfe9f2], // 1 cozinha (luz interna clara)
+      [0x2f7fd0, 0xe8b06a], // 2 mineradora (céu azul + poeira dourada)
+      [0x3f8fd8, 0xe0c090], // 3 rua de terra
+      [0x2f7fd0, 0xd8a860], // 4A humilhação
+      [0x0a1020, 0x1a2438], // 5 balança (escuro)
+      [0x05070c, 0x0e1420], // 6 mapa (escuro)
+    ];
+    const sk = skies[sceneIndex] || skies[0];
+    addSky3D(sk[0], sk[1]);
+    switch (sceneIndex) {
+      case 0: buildScene1_3D(t, dur); break;
+      case 1: buildScene2_3D(t, dur); break;
+      case 2: buildScene3_3D(t, dur); break;
+      case 3: buildScene4A_3D(t, dur * 0.55, subP); break;
+      case 4: buildScene5_3D(t, dur); break;
+      case 5: buildScene6_3D(t, dur); break;
+      default: return false;
+    }
+    // Garante que a câmera realmente enquadre o conteúdo construído.
+    T3.camera.updateMatrixWorld(true);
+    // Se o contexto WebGL foi perdido, tenta recuperar antes de renderizar.
+    if (T3.contextLost) {
+      try {
+        if (T3.renderer && T3.renderer.forceContextRestore) {
+          T3.renderer.forceContextRestore();
+          T3.contextLost = false;
+        } else {
+          return false;
+        }
+      } catch (e) {
+        return false;
+      }
+    }
+    T3.renderer.render(T3.scene, T3.camera);
+    return true;
+  }
+
+  const scenes = [
+    { draw: drawScene1, name: 'Cozinha Humilde' },
+    { draw: drawScene2, name: 'Complexo Mineral' },
+    { draw: drawScene3, name: 'Rua de Terra' },
+    { draw: drawScene4, name: 'Humilhação e Abandono' },
+    { draw: drawScene5, name: 'Balança da Justiça' },
+    { draw: drawScene6, name: 'Chamada para Ação' },
+  ];
+
+  function render(ctx, W, H, sceneIndex, t, sceneDur) {
+    ctx.clearRect(0, 0, W, H);
+    const scene = scenes[sceneIndex];
+    if (!scene) return;
+    // 1) fundo 2D (céu, gradientes, atmosfera)
+    // 3D como fundo principal
+    /* 3D fundo principal */
+    const subP = clamp(t / sceneDur, 0, 1);
+    let has3D = false;
+    try {
+      has3D = render3D(sceneIndex, t, sceneDur, subP, W, H);
+    } catch (e) {
+      console.warn('CanaaRenderer: falha no 3D da cena ' + (sceneIndex + 1), e);
+      has3D = false;
+    }
+    if (has3D) {
+      // 3D é o fundo principal (opaco, cobre o canvas inteiro).
+      ctx.drawImage(T3.canvas, 0, 0, W, H);
+      // 2D entra apenas como camada de reforço leve, sem "imagem sobre imagem".
+      // O 2D nao e mais desenhado por cima (era o "imagem sobre imagem").
+    } else {
+      scene.draw(ctx, W, H, t, sceneDur);
+    }
+  }
+
+  return {
+    render,
+    sceneCount: scenes.length,
+    sceneNames: scenes.map(s => s.name),
+  };
+
+})();
+
+// Exportar para uso global
+if (typeof window !== 'undefined') {
+  window.CanaaRenderer = CanaaRenderer;
+}

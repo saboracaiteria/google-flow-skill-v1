@@ -15,6 +15,11 @@ Comandos
   python flow.py status
       Dice si ya hay sesion guardada.
 
+  python flow.py chrome
+      Deja un Chrome real y persistente (CDP, perfil de session/) ABIERTO en
+      127.0.0.1:9223. Los comandos image/video/batch/short se conectan a el y NO
+      lo cierran al terminar (mas rapido y estable). FLOW_USE_CDP=false lo desactiva.
+
   python flow.py image --prompt "..." [--ratio 9:16] [--model "Nano Banana 2 Lite"]
                         [--image referencia.png] [--name escena1] [--out outputs]
       Genera UNA imagen (texto->imagen, o imagen+prompt->imagen si das --image).
@@ -49,16 +54,17 @@ from playwright.async_api import async_playwright
 
 import flow_provider as flow
 from flow_provider import settings
+from flow_provider import compose, policy_guard
 
-# Consola UTF-8 en Windows (acentos/emojis sin romper la salida).
+# Consola UTF-8 en Windows (acentos/emojis sin romper la salida) y flush inmediato.
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
 
 BASE_DIR = Path(__file__).parent.resolve()
 DEFAULT_OUT = BASE_DIR / "outputs"
-FLOW_URL = "https://labs.google/fx/es-419/tools/flow"
+FLOW_URL = "https://flow.google.com/"
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +140,7 @@ async def cmd_login(_args) -> int:
             url = page.url
             try:
                 ready = await page.get_by_role(
-                    "button", name=re.compile(r"Proyecto nuevo|Nuevo proyecto|New project", re.I)
+                    "button", name=re.compile(r"Proyecto nuevo|Nuevo proyecto|New project|Novo projeto", re.I)
                 ).count() > 0
             except Exception:
                 ready = False
@@ -163,6 +169,22 @@ async def cmd_status(_args) -> int:
     return 1
 
 
+async def cmd_chrome(_args) -> int:
+    """Deja un Chrome persistente (CDP) abierto y lo reutiliza en los demas comandos."""
+    print("=== CHROME PERSISTENTE (CDP) ===")
+    if flow.cdp_up(settings.FLOW_CDP_HOST, settings.FLOW_CDP_PORT):
+        print(f"Ya hay un Chrome persistente en {settings.FLOW_CDP_URL}.")
+        return 0
+    ok = await flow.launch_detached_chrome(FLOW_URL)
+    if not ok:
+        print("No se pudo dejar un Chrome persistente.")
+        print("Comprueba que Google Chrome este instalado o define FLOW_CHROME_PATH.")
+        return 1
+    print(f"Chrome queda ABIERTO en {settings.FLOW_CDP_URL}.")
+    print("Si hace falta, inicia sesion ahi; image/video/batch/short lo reutilizaran sin cerrarlo.")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Generadores atomicos (asumen proyecto YA abierto)
 # ---------------------------------------------------------------------------
@@ -181,19 +203,30 @@ async def _gen_image(prompt, ratio, model, count, image, out_path) -> str:
 async def _gen_video(prompt, ratio, model, count, start, end, out_path, duration=None) -> str:
     if count != 1:
         raise ValueError("Esta CLI descarga un video por trabajo. Para un lote, usa varios jobs video con count=1.")
-    if start and end:
-        await flow.select_video_mode(mode="fotogramas", model=model, aspect_ratio=ratio, count=count, duration=duration)
-        await flow.upload_frame(start, slot="initial")
-        await asyncio.sleep(3)
-        await flow.upload_frame(end, slot="final")
-    elif start:
-        await flow.select_video_mode(mode="fotogramas", model=model, aspect_ratio=ratio, count=count, duration=duration)
-        await flow.upload_frame(start, slot="initial")
+    # Modo con fotogramas (continuidad) con degradacion graciosa: si adjuntar el frame
+    # falla (UI inestable tras la primera generacion), se genera el clip texto->video.
+    frame_mode = bool(start or end)
+    if frame_mode:
+        try:
+            await flow.select_video_mode(mode="fotogramas", model=model, aspect_ratio=ratio, count=count, duration=duration)
+            if start and end:
+                await flow.upload_frame(start, slot="initial")
+                await asyncio.sleep(3)
+                await flow.upload_frame(end, slot="final")
+            elif start:
+                await flow.upload_frame(start, slot="initial")
+            else:
+                await flow.upload_frame(end, slot="final")
+        except Exception as e:
+            print(f"    [video] No se pudo adjuntar el frame ({e}); continuar texto->video.")
+            await flow.select_video_mode(mode="texto", model=model, aspect_ratio=ratio, count=count, duration=duration)
     else:
         await flow.select_video_mode(mode="texto", model=model, aspect_ratio=ratio, count=count, duration=duration)
     pre = await flow.get_canvas_count()
     await flow.submit_prompt(prompt)
-    await flow.wait_for_video(pre_submit_count=pre)
+    # Paciencia ampliada: Flow puede tardar mas de 3 min bajo carga; esperar evita
+    # abandonar un render que iba a concluir y gastar creditos de nuevo.
+    await flow.wait_for_video(pre_submit_count=pre, timeout_ms=300000)
     return await flow.download_latest(out_path, resolution="720p", is_video=True)
 
 
@@ -209,7 +242,7 @@ async def cmd_image(args) -> int:
     out_path = _out_path(out_dir, name, "png")
     await flow.startup()
     try:
-        await flow.create_project()
+        await flow.ensure_project(force_new=getattr(args, "new_project", False))
         saved = await _gen_image(args.prompt, args.ratio, args.model, args.count, args.image, out_path)
         print(f"OK imagen -> {saved}")
         return 0
@@ -226,7 +259,7 @@ async def cmd_video(args) -> int:
     out_path = _out_path(out_dir, name, "mp4")
     await flow.startup()
     try:
-        await flow.create_project()
+        await flow.ensure_project(force_new=getattr(args, "new_project", False))
         saved = await _gen_video(args.prompt, args.ratio, args.model, args.count, args.start, args.end, out_path, args.duration)
         print(f"OK video -> {saved}")
         return 0
@@ -256,7 +289,7 @@ async def cmd_batch(args) -> int:
     results = []
     await flow.startup()
     try:
-        await flow.create_project()
+        await flow.ensure_project(force_new=getattr(args, "new_project", False))
         for i, job in enumerate(jobs, 1):
             jtype = job.get("type", "image")
             name = job.get("name") or f"{jtype}_{i:02d}"
@@ -308,6 +341,179 @@ async def cmd_batch(args) -> int:
     return 0 if ok == len(results) else 1
 
 
+def _ask_human_approve(decision: dict) -> bool:
+    """Pide aprobación explícita al humano para reescribir un prompt bloqueado.
+
+    Sin terminal interactivo (agente/sandbox) se trata como NO aprobado: el
+    guardián nunca reenvía por su cuenta.
+    """
+    if not decision.get("allowed") or decision.get("rewrite") is None:
+        print(f"  [guard] Idea sin versión dentro de la política (motivo: {decision['motivo']}). No se reenvía.")
+        return False
+    print("  [guard] Flow bloqueó este prompt. Sugerencia de reescrita DENTRO de la política:")
+    print(f"      antes: {decision['original']}")
+    print(f"      después: {decision['rewrite']}")
+    if not sys.stdin or not sys.stdin.isatty():
+        print("  [guard] Sin terminal interactivo: se marca como bloqueado (no se reenvía solo).")
+        return False
+    try:
+        ans = input("  [guard] ¿Reenviar con esta reescrita? (s/N): ").strip().lower()
+    except Exception:
+        return False
+    return ans in ("s", "sim", "y", "yes")
+
+
+async def _gen_video_guarded(prompt, ratio, model, start, out_path, duration, blocked_log):
+    """Genera un clip de video; si Flow lo bloquea, ofrece reescrita aprobada por humano."""
+    # Primer intento con la duración pedida; si el modelo no la ofrece, reintenta sin duración.
+    for attempt_dur in (duration, None):
+        try:
+            return await _gen_video(prompt, ratio, model, 1, start, None, out_path, attempt_dur)
+        except Exception as e:
+            err = str(e)
+            # ¿Fue un bloqueo de contenido o un fallo técnico de duración/UI?
+            decision = policy_guard.evaluate_blocked_prompt(prompt, err)
+            if decision["motivo"] == "unknown" and attempt_dur is not None:
+                print(f"  [short] Sin duración {attempt_dur} en el modelo; reintentando sin duración...")
+                continue
+            if decision["motivo"] == "unknown":
+                raise
+            if _ask_human_approve(decision):
+                new_prompt = decision["rewrite"]
+                try:
+                    saved = await _gen_video(new_prompt, ratio, model, 1, start, None, out_path, attempt_dur)
+                    blocked_log.append({"prompt": prompt, "decision": decision, "approved": True})
+                    return saved
+                except Exception as e2:
+                    blocked_log.append({"prompt": prompt, "decision": decision, "approved": True, "error": str(e2)})
+                    raise
+            blocked_log.append({"prompt": prompt, "decision": decision, "approved": False})
+            raise RuntimeError(f"Prompt bloqueado por Flow y no aprobado para reescrita (motivo {decision['motivo']}).")
+    raise RuntimeError("No se pudo generar el clip.")
+
+
+async def cmd_short(args) -> int:
+    if not session_exists():
+        print("SIN SESION. Corre primero: python flow.py login")
+        return 1
+
+    data = json.loads(Path(args.jobfile).read_text(encoding="utf-8"))
+    title = data.get("title") or f"short_{_stamp()}"
+    project_dir = Path(args.out) / _safe(title)
+    clips_dir = project_dir / "_clips"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    clips_dir.mkdir(parents=True, exist_ok=True)
+
+    ratio = data.get("ratio", "9:16")
+    voice = args.voice or data.get("voice") or "pt-BR-AntonioNeural"
+    target = compose.parse_target(args.duration or data.get("target_duration", "30s"))
+    clip_len = compose.parse_target(data.get("clip_duration", "10s"))
+    n = compose.plan_clips(target, clip_len)
+
+    scenes = data.get("scenes", [])
+    if not scenes:
+        print("El roteiro necesita al menos una 'scene' con 'prompt'.")
+        return 1
+
+    # Prompts por clip (cicla las escenas definidas hasta cubrir N).
+    prompts = [scenes[i % len(scenes)].get("prompt", "") for i in range(n)]
+
+    # Narración: por escena si cada una trae 'narration'; si no, reparte el texto total.
+    if any(s.get("narration") for s in scenes) and len(scenes) >= n:
+        narration = [scenes[i].get("narration", "") for i in range(n)]
+    else:
+        narration = compose.distribute_narration(data.get("narration_text", ""), n)
+
+    ref_image = _resolve_asset(project_dir, data.get("reference_image"))
+    clip_dur_str = data.get("clip_duration", "10s")
+
+    print(f"SHORT '{title}': alvo {target:.0f}s -> {n} clips de ~{clip_len:.0f}s (Omni 1.1 Flash).")
+    print(f"  Voz: {voice} | Ratio: {ratio} | Referencia: {ref_image or '(texto a texto)'}")
+    print(f"  Costo: {n} generaciones de video Omni consumen créditos.")
+
+    blocked_log: list = []
+    clips: list[str] = []
+    await flow.startup()
+    try:
+        await flow.ensure_project(force_new=getattr(args, "new_project", False))
+        last_frame = ref_image
+        for i in range(n):
+            out_clip = _out_path(clips_dir, f"clip_{i+1:02d}", "mp4")
+            print(f"\n--- clip {i+1}/{n} :: {prompts[i][:60]}... ---")
+            # Reanudación: si el clip ya existe y es válido, no se regenera (ahorra créditos).
+            if Path(out_clip).exists() and Path(out_clip).stat().st_size > 50_000:
+                print(f"  [short] Clip ya generado, reutilizando: {out_clip}")
+                saved = out_clip
+            else:
+                # Reintentos ante fallos transitorios de UI (file chooser, render), no de contenido.
+                saved = None
+                for intento in range(3):
+                    try:
+                        saved = await _gen_video_guarded(
+                            prompts[i], ratio, "Omni 1.1 Flash", last_frame, out_clip, clip_dur_str, blocked_log,
+                        )
+                        break
+                    except Exception as e:
+                        # Bloqueo de contenido no aprobado: no reintentar.
+                        if "bloqueado" in str(e).lower():
+                            raise
+                        print(f"  [short] Fallo transitorio en clip {i+1} (intento {intento+1}/3): {e}")
+                        await asyncio.sleep(3)
+                        last_frame = ref_image if i == 0 else last_frame
+                if saved is None:
+                    raise RuntimeError(f"Clip {i+1} no se pudo generar tras 3 intentos.")
+            clips.append(saved)
+            # Continuidad: último cuadro alimenta el fotograma inicial del próximo clip.
+            if i < n - 1:
+                frame = _out_path(clips_dir, f"frame_{i+1:02d}", "png")
+                try:
+                    last_frame = compose.extract_last_frame(saved, frame)
+                except Exception as e:
+                    print(f"  [short] No se pudo extraer último cuadro ({e}); siguiente clip va texto->video.")
+                    last_frame = None
+    finally:
+        if blocked_log:
+            (project_dir / "blocked_prompts.json").write_text(
+                json.dumps(blocked_log, indent=2, ensure_ascii=False), encoding="utf-8")
+        await flow.shutdown()
+
+    if not clips:
+        print("Ningún clip generado; no hay nada que montar.")
+        return 1
+
+    # Narración (TTS con cache) + SRT sincronizado + montaje 360p.
+    print("\n[montage] Generando narración y subtítulos...")
+    narr_files = []
+    for i, txt in enumerate(narration, 1):
+        mp3 = project_dir / f"narr_{i:02d}.mp3"
+        await compose.tts_scene(txt, voice, mp3)
+        narr_files.append(str(mp3))
+
+    durations = []
+    for c in clips:
+        try:
+            durations.append(compose.media_duration(c))
+        except Exception:
+            durations.append(clip_len)
+    starts = compose._clip_start_times(durations, compose.CROSSFADE)
+    srt_path = project_dir / f"{_safe(title)}.srt"
+    compose.build_srt(list(zip(starts, narration)), srt_path, target)
+
+    final = project_dir / f"{_safe(title)}_360p.mp4"
+    print("[montage] Concatenando, mezclando audio, quemando leyenda y exportando 360p...")
+    compose.assemble(clips, narr_files, srt_path, final, target)
+
+    report = {
+        "title": title, "target_seconds": target, "clips": n, "voice": voice,
+        "model": "Omni 1.1 Flash", "output": str(final), "srt": str(srt_path),
+        "blocked_prompts": len(blocked_log),
+    }
+    (project_dir / "short_report.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"\nOK video -> {final}")
+    return 0
+
+
 async def cmd_clean(args) -> int:
     out_dir = Path(args.out)
     if args.project:
@@ -343,6 +549,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("login", help="Loguearse en Google Flow (una vez).")
     sub.add_parser("status", help="Ver si hay sesion guardada.")
+    sub.add_parser("chrome", help="Deja un Chrome persistente (CDP) abierto para reutilizarlo.")
 
     pi = sub.add_parser("image", help="Generar una imagen.")
     pi.add_argument("--prompt", required=True)
@@ -352,21 +559,31 @@ def build_parser() -> argparse.ArgumentParser:
     pi.add_argument("--image", default=None, help="Imagen de referencia para editar.")
     pi.add_argument("--name", default=None)
     pi.add_argument("--out", default=str(DEFAULT_OUT))
+    pi.add_argument("--new-project", dest="new_project", action="store_true", help="Forzar proyecto nuevo en vez de reutilizar el actual.")
 
     pv = sub.add_parser("video", help="Generar un video.")
     pv.add_argument("--prompt", required=True)
     pv.add_argument("--ratio", default="9:16")
-    pv.add_argument("--model", default="Veo 3.1 - Lite")
+    pv.add_argument("--model", default="Omni 1.1 Flash")
     pv.add_argument("--count", type=int, default=1)
     pv.add_argument("--duration", default=None, help="Duracion del clip, por ejemplo 8s (si el modelo la admite).")
     pv.add_argument("--start", default=None, help="Fotograma inicial (imagen).")
     pv.add_argument("--end", default=None, help="Fotograma final (imagen).")
     pv.add_argument("--name", default=None)
     pv.add_argument("--out", default=str(DEFAULT_OUT))
+    pv.add_argument("--new-project", dest="new_project", action="store_true", help="Forzar proyecto nuevo en vez de reutilizar el actual.")
 
     pb = sub.add_parser("batch", help="Ejecutar guion JSON de varios trabajos.")
     pb.add_argument("jobfile")
     pb.add_argument("--out", default=str(DEFAULT_OUT))
+    pb.add_argument("--new-project", dest="new_project", action="store_true", help="Forzar proyecto nuevo en vez de reutilizar el actual.")
+
+    psh = sub.add_parser("short", help="Video corto narrado de duracion libre (pipeline de montaje).")
+    psh.add_argument("jobfile", help="Roteiro JSON (title, target_duration, scenes, narration).")
+    psh.add_argument("--out", default=str(DEFAULT_OUT))
+    psh.add_argument("--voice", default=None, help="Voz edge-tts (ex. pt-BR-AntonioNeural / pt-BR-FranciscaNeural).")
+    psh.add_argument("--duration", default=None, help="Duracion-alvo final (ex. 30s, 2min, 3:00).")
+    psh.add_argument("--new-project", dest="new_project", action="store_true", help="Forzar proyecto nuevo en vez de reutilizar el actual.")
 
     pc = sub.add_parser("clean", help="Borrar resultados de outputs.")
     pc.add_argument("project", nargs="?", default=None,
@@ -379,9 +596,11 @@ def build_parser() -> argparse.ArgumentParser:
 HANDLERS = {
     "login": cmd_login,
     "status": cmd_status,
+    "chrome": cmd_chrome,
     "image": cmd_image,
     "video": cmd_video,
     "batch": cmd_batch,
+    "short": cmd_short,
     "clean": cmd_clean,
 }
 

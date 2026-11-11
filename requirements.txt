@@ -1,3 +1,5 @@
 playwright>=1.49.0
 python-dotenv
 Pillow
+edge-tts>=7.0
+imageio-ffmpeg>=0.5

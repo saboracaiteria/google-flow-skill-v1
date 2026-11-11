@@ -1,0 +1,117 @@
+{
+  "title": "A Bolha e o Xadrez Mental",
+  "theme": "Filosofia & Psicologia Contemporânea",
+  "format": "9:16",
+  "target_duration": 60,
+  "style": "stylized_3d_cinema",
+  "scenes": [
+    {
+      "id": 1,
+      "name": "Gancho Hipnótico",
+      "duration": 6.0,
+      "camera": {
+        "start": { "x": 0.0, "y": 1.45, "z": 0.8 },
+        "end": { "x": 0.0, "y": 1.5, "z": 2.6 },
+        "lookAt": { "x": 0.0, "y": 1.35, "z": 0.0 },
+        "fov": 30
+      },
+      "environment": "xadrez_biblioteca_split",
+      "actors": ["thinker"],
+      "action": "thinker_intense_look",
+      "text_overlay": "PARE DE PERDER ESSA DISCUSSÃO!",
+      "narration": "Presta muita atenção nisso: você já percebeu que tentar argumentar com certas pessoas parece um teste de paciência sem fim?",
+      "audio_file": "outputs/narracoes/xadrez_cena1.mp3",
+      "sfx": "cinematic_braam"
+    },
+    {
+      "id": 2,
+      "name": "A Metáfora do Pombo",
+      "duration": 10.0,
+      "camera": {
+        "start": { "x": 0.8, "y": 1.15, "z": 1.5 },
+        "end": { "x": 0.2, "y": 1.05, "z": 1.2 },
+        "lookAt": { "x": 0.0, "y": 0.95, "z": 0.0 },
+        "fov": 42
+      },
+      "environment": "xadrez_biblioteca_split",
+      "actors": ["pigeon", "chess_pieces"],
+      "action": "pigeon_slam_pieces",
+      "text_overlay": "DISCUTINDO COM UM POMBO",
+      "narration": "É literalmente o clássico xadrez com o pombo. Não importa a sua jogada ou a sua lógica: o adversário vai derrubar as peças, fazer sujeira na mesa e ainda sair estufando o peito como se tivesse vencido.",
+      "audio_file": "outputs/narracoes/xadrez_cena2.mp3",
+      "sfx": "chess_crash_pigeon"
+    },
+    {
+      "id": 3,
+      "name": "O Negócio da Indignação",
+      "duration": 11.0,
+      "camera": {
+        "start": { "x": -1.2, "y": 1.3, "z": 1.8 },
+        "end": { "x": -1.5, "y": 1.45, "z": 1.1 },
+        "lookAt": { "x": -1.3, "y": 1.3, "z": 0.0 },
+        "fov": 40
+      },
+      "environment": "xadrez_bolha_fakenews",
+      "actors": ["fanatic", "floating_icons"],
+      "action": "fanatic_frenetic_type",
+      "text_overlay": "O LUCRO DO TERRORISMO EMOCIONAL",
+      "narration": "Mas repara no truque: por trás do medo, do ódio e desse terrorismo emocional todo, sempre tem alguém lucrando com engajamento, visualizações e soluções milagrosas.",
+      "audio_file": "outputs/narracoes/xadrez_cena3.mp3",
+      "sfx": "cash_register_loop"
+    },
+    {
+      "id": 4,
+      "name": "Choque com a Realidade",
+      "duration": 11.0,
+      "camera": {
+        "start": { "x": 0.5, "y": 1.6, "z": 2.2, "tilt": 12 },
+        "end": { "x": 0.0, "y": 1.25, "z": 1.6, "tilt": 5 },
+        "lookAt": { "x": -0.2, "y": 1.0, "z": 0.0 },
+        "fov": 45
+      },
+      "environment": "xadrez_cracked_bubble",
+      "actors": ["thinker", "fanatic", "law_book"],
+      "action": "book_slam_shockwave",
+      "text_overlay": "NARRATIVA VS. REALIDADE",
+      "narration": "E o que acontece quando essa narrativa esbarra na realidade e nas leis? O choque é imediato. Passam vergonha, quebram a cara, mas o orgulho é tão grande que preferem culpar o universo.",
+      "audio_file": "outputs/narracoes/xadrez_cena4.mp3",
+      "sfx": "book_slam_glass_crack"
+    },
+    {
+      "id": 5,
+      "name": "O Preço da Sanidade",
+      "duration": 10.0,
+      "camera": {
+        "start": { "x": 0.4, "y": 1.3, "z": 2.1 },
+        "end": { "x": 0.25, "y": 1.35, "z": 1.7 },
+        "lookAt": { "x": 0.2, "y": 1.25, "z": 0.0 },
+        "fov": 38
+      },
+      "environment": "xadrez_biblioteca_split",
+      "actors": ["thinker", "pigeon"],
+      "action": "thinker_sip_coffee",
+      "text_overlay": "PRESERVE A SUA PAZ",
+      "narration": "Tentar tirar alguém à força de uma ilusão só desgasta você. Quando a pessoa escolheu a própria bolha, sua resposta mais sábia é o silêncio.",
+      "audio_file": "outputs/narracoes/xadrez_cena5.mp3",
+      "sfx": "piano_acoustic_calm"
+    },
+    {
+      "id": 6,
+      "name": "Fechamento & CTA",
+      "duration": 12.0,
+      "camera": {
+        "start": { "x": 0.0, "y": 1.35, "z": 1.8 },
+        "end": { "x": 0.0, "y": 1.4, "z": 1.3 },
+        "lookAt": { "x": 0.0, "y": 1.35, "z": 0.0 },
+        "fov": 35
+      },
+      "environment": "xadrez_biblioteca_split",
+      "actors": ["thinker", "social_cta_3d"],
+      "action": "thinker_smile_pocket_king",
+      "text_overlay": "CURTA • COMENTE • SIGA",
+      "narration": "Guarde as suas peças e economize a sua paz. Se essa reflexão fez sentido pra você, já toca no botão de seguir a página, deixa o seu like e me conta aqui nos comentários: você ainda perde tempo jogando xadrez com pombo?",
+      "audio_file": "outputs/narracoes/xadrez_cena6.mp3",
+      "sfx": "finger_snap_chime"
+    }
+  ]
+}

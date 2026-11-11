@@ -74,27 +74,34 @@ def _image_model_name(text: str) -> str:
 
 async def _open_settings(page):
     """Reutiliza el panel abierto; recupera la reapertura tras un Escape previo."""
-    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+    if await page.locator("flow-prompt-box-settings").count() == 0:
+        # En la nueva interfaz de Flow (Creative Agent), no existe flow-prompt-box-settings.
+        # Evitar hacer click en el botón tune para no abrir el diálogo de proyecto sobre el prompt.
+        return None
     panel = page.locator("flow-prompt-box-settings:visible").first
     for attempt in range(2):
         if await panel.is_visible():
             return panel
-        print(f"    [config] Abriendo ajustes de Flow (intento {attempt + 1}/2)...")
-        await page.locator(SEL_PANEL_TRIGGER).click(timeout=10_000)
-        try:
-            await panel.wait_for(state="visible", timeout=3_000)
-            return panel
-        except PlaywrightTimeoutError:
-            if attempt == 1:
-                raise
+        trigger = page.locator(SEL_PANEL_TRIGGER).first
+        if await trigger.count() > 0 and await trigger.is_visible():
+            try:
+                await trigger.click(timeout=3_000)
+                await panel.wait_for(state="visible", timeout=3_000)
+                return panel
+            except Exception:
+                pass
+    return None
 
 
 async def _close_settings(page):
     """Cierra mediante el mismo botón para que la siguiente apertura funcione."""
     panel = page.locator("flow-prompt-box-settings:visible").first
-    if await panel.is_visible():
-        await page.locator(SEL_PANEL_TRIGGER).click(timeout=10_000)
-    await panel.wait_for(state="hidden", timeout=5_000)
+    if await panel.count() > 0 and await panel.is_visible():
+        try:
+            await page.locator(SEL_PANEL_TRIGGER).first.click(timeout=5_000)
+            await panel.wait_for(state="hidden", timeout=5_000)
+        except Exception:
+            pass
 
 
 async def select_image_mode(
@@ -106,25 +113,28 @@ async def select_image_mode(
     page = await get_page()
     await _dismiss_blocking_changelog(page)
 
-    await _open_settings(page)
+    panel = await _open_settings(page)
+    if not panel:
+        print("    [config] Modo Creative Agent detectado; continuando con la instrucción directa.")
+        return
 
-    # 2. Confirmar pestaña 'Imagen' dentro del panel
-    print("    [config 2/5] Confirmando pestaña 'Imagen'...")
-    tab_img = page.locator('flow-prompt-box-settings flow-toggles[aria-label="Modo"] button:has-text("Imagen"), flow-prompt-box-settings button:has-text("Imagen")').first
+    # 2. Confirmar pestaña 'Imagen'/'Imagem' dentro del panel
+    print("    [config 2/5] Confirmando pestaña 'Imagen'/'Imagem'...")
+    tab_img = page.locator('flow-prompt-box-settings flow-toggles[aria-label*="Modo" i] button:has-text("Imagen"), flow-prompt-box-settings flow-toggles[aria-label*="Modo" i] button:has-text("Imagem"), flow-prompt-box-settings button:has-text("Imagen"), flow-prompt-box-settings button:has-text("Imagem")').first
     if await tab_img.count() > 0 and await tab_img.is_visible():
         await tab_img.click()
         await page.wait_for_timeout(300)
 
     # 3. Aspect ratio dentro del panel (ej. 9:16)
     print(f"    [config 3/5] Seleccionando relación de aspecto: {aspect_ratio}...")
-    ratio_btn = page.locator(f'flow-prompt-box-settings flow-toggles[aria-label="Relación de aspecto"] button:has-text("{aspect_ratio}"), flow-prompt-box-settings button:has-text("{aspect_ratio}")').first
+    ratio_btn = page.locator(f'flow-prompt-box-settings flow-toggles button:has-text("{aspect_ratio}"), flow-prompt-box-settings button:has-text("{aspect_ratio}")').first
     if await ratio_btn.count() > 0 and await ratio_btn.is_visible():
         await ratio_btn.click()
         await page.wait_for_timeout(300)
 
     # 4. Seleccionar modelo dentro del panel
     print(f"    [config 4/5] Verificando modelo: {model}...")
-    model_btn = page.locator('flow-prompt-box-settings button[aria-label="Seleccionar familia de modelos"], flow-prompt-box-settings button:has(span.model-select-trigger-content)').first
+    model_btn = page.locator('flow-prompt-box-settings button[aria-label*="modelos" i], flow-prompt-box-settings button[aria-label*="models" i], flow-prompt-box-settings button:has(span.model-select-trigger-content)').first
     if await model_btn.count() > 0 and await model_btn.is_visible():
         current_text = await model_btn.inner_text()
         # Si el modelo ya está activo, no tocar el submenú
@@ -140,8 +150,8 @@ async def select_image_mode(
             await menu_item.click()
             await page.wait_for_function(
                 """target => {
-                    const b = document.querySelector('flow-prompt-box-settings button[aria-label="Seleccionar familia de modelos"]');
-                    const clean = s => s.replace(/arrow_drop_down/g, '').replace(/🍌/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+                    const b = document.querySelector('flow-prompt-box-settings button[aria-label*="modelos" i], flow-prompt-box-settings button[aria-label*="models" i]');
+                    const clean = s => s.replace(/arrow_drop_down/g, '').replace(/🍌/g, '').replace(/\\s+/g, ' ').trim().toLowerCase();
                     return b && clean(b.innerText) === target;
                 }""", arg=_image_model_name(target_model), timeout=8_000)
     else:
@@ -149,7 +159,7 @@ async def select_image_mode(
 
     # 5. Cantidad dentro del panel (x1)
     print(f"    [config 5/5] Ajustando cantidad a: x{count}...")
-    count_btn = page.locator(f'flow-prompt-box-settings flow-toggles[aria-label="Número de salidas"] button:has-text("x{count}"), flow-prompt-box-settings button:has-text("x{count}")').first
+    count_btn = page.locator(f'flow-prompt-box-settings flow-toggles button:has-text("x{count}"), flow-prompt-box-settings button:has-text("x{count}")').first
     if await count_btn.count() > 0 and await count_btn.is_visible():
         await count_btn.click()
         await page.wait_for_timeout(300)
@@ -183,12 +193,15 @@ async def select_video_mode(
     from playwright.async_api import expect
     page = await get_page()
     panel = await _open_settings(page)
+    if not panel:
+        print("    [config] Modo Creative Agent detectado; continuando con la instrucción directa.")
+        return
     await _select_radio(panel, re.compile(r"^V[ií]deo$", re.I))
     if mode in ("fotogramas", "ingredientes"):
-        await _select_radio(panel, "Fotogramas" if mode == "fotogramas" else "Ingredientes")
+        await _select_radio(panel, re.compile(r"Fotogramas|Frames|Quadros", re.I) if mode == "fotogramas" else re.compile(r"Ingredientes|Ingredients", re.I))
     elif mode != "texto":
         raise ValueError(f"Modo de video desconocido: {mode}")
-    trigger = panel.get_by_role("button", name="Seleccionar familia de modelos", exact=True)
+    trigger = panel.get_by_role("button", name=re.compile(r"Seleccionar familia de modelos|Selecionar família de modelos|Select model", re.I)).first
     target = "Omni 1.1 Flash" if model in ("Omni Flash", "Omni 1.1 - Flash") else model
     pattern = re.compile(r"^\s*" + re.escape(target) + r"\s*(?:arrow_drop_down)?\s*$")
     if not pattern.fullmatch(await trigger.inner_text()):

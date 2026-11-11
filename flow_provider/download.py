@@ -16,8 +16,8 @@ from .browser import get_page
 from . import settings
 
 SEL_RESULT_CARD = 'flow-grid-tile-container, flow-tile-container, [aria-roledescription="draggable"]'
-SEL_MORE_MENU   = 'button[aria-label="Más opciones"], button:has(:is(i, mat-icon):text-is("more_vert"))'
-SEL_DL_ITEM     = '[role="menuitem"]:has-text("Descargar"), button:has(:is(i, mat-icon):text-is("download"))'
+SEL_MORE_MENU   = 'button[aria-label="Más opciones"], button[aria-label="Mais opções"], button[aria-label*="opç"], button[aria-label*="opci"], button:has(:is(i, mat-icon):text-is("more_vert"))'
+SEL_DL_ITEM     = ':is([role="menuitem"], button):has(:is(i, mat-icon):text-is("download")), [role="menuitem"]:has-text("Fazer o download"), [role="menuitem"]:has-text("Fazer download"), [role="menuitem"]:has-text("Descargar"), [role="menuitem"]:has-text("Baixar"), [role="menuitem"]:has-text("Download")'
 SEL_DL_RES = {
     "1K": '[role="menuitem"]:has-text("1K")',
     "2K": '[role="menuitem"]:has-text("2K")',
@@ -53,7 +53,7 @@ def _sel_card(is_video: bool = False) -> str:
 def _sel_menu_item(icono: str) -> str:
     """Entrada del menú por su ligadura de ícono o texto."""
     if icono == "download":
-        return ':is([role="menuitem"], button):has(:is(i, mat-icon):text-is("download")), [role="menuitem"]:has-text("Descargar"), [role="menuitem"]:has-text("Download")'
+        return ':is([role="menuitem"], button):has(:is(i, mat-icon):text-is("download")), [role="menuitem"]:has-text("Fazer o download"), [role="menuitem"]:has-text("Fazer download"), [role="menuitem"]:has-text("Download"), [role="menuitem"]:has-text("Descargar"), [role="menuitem"]:has-text("Baixar")'
     return f':is([role="menuitem"], button, [role="button"]):has(:is(i, mat-icon):text-is("{icono}"))'
 
 
@@ -296,25 +296,17 @@ async def download_latest(output_path: str, resolution: str = "1K", is_video: bo
     except Exception:
         pass
 
-    if not sub_visible:
-        try:
-            print("  [download 3/5] Hover no abrió submenú; haciendo clic en 'Descargar'...")
-            await dl_item.click()
-            await asyncio.sleep(0.4)
-        except Exception:
-            pass
-
     # Localizar la opción de resolución deseada
     target_loc = None
     elegido = None
     for sel in candidatos:
         loc = page.locator(sel).first
         try:
-            await loc.wait_for(state="visible", timeout=4_000)
-            target_loc = loc
-            elegido = sel
-            print(f"  [download 4/5] Opción encontrada en submenú: {sel}")
-            break
+            if await loc.count() > 0 and await loc.is_visible():
+                target_loc = loc
+                elegido = sel
+                print(f"  [download 4/5] Opción encontrada en submenú: {sel}")
+                break
         except Exception:
             continue
 
@@ -322,41 +314,47 @@ async def download_latest(output_path: str, resolution: str = "1K", is_video: bo
         print("  [download 4/5] Submenú no visible; se usará 'Descargar' directo.")
         target_loc = dl_item
 
-    # Disparar la descarga dentro del listener oficial de Playwright
+    # Disparar la descarga. En modo CDP el evento puede no llegar: se tolera y
+    # se cae al rescate por filesystem (Chrome deja el archivo en su carpeta).
     print(f"  [download 5/5] Clic en la opción de descarga y esperando evento...")
-    async with page.expect_download(timeout=60_000) as info:
-        await target_loc.click()
-
-    download = await info.value
-    suggested = getattr(download, "suggested_filename", "archivo")
-    print(f"  [download] Evento de descarga recibido ({suggested}). Guardando...")
+    download = None
+    suggested = ""
+    try:
+        async with page.expect_download(timeout=20_000) as info:
+            await target_loc.click()
+        download = await info.value
+        suggested = getattr(download, "suggested_filename", "archivo")
+        print(f"  [download] Evento de descarga recibido ({suggested}). Guardando...")
+    except Exception as ev:
+        print(f"  [download] Aviso: sin evento de descarga ({ev}); buscando archivo en disco...")
 
     # Guardar en output_path
     saved = False
 
-    # 1. Intentar download.path() directo si Playwright lo tiene en caché
-    try:
-        p = await download.path()
-        if p and Path(p).exists() and Path(p).stat().st_size > 50_000:
-            _save_to_dest(p, output_path)
-            saved = True
-            print(f"  [download] Guardado directo vía download.path() en {output_path}")
-    except Exception:
-        pass
-
-    # 2. Intentar save_as de Playwright
-    if not saved:
-        temp_path = Path(f"{output_path}.download")
+    if download is not None:
+        # 1. Intentar download.path() directo si Playwright lo tiene en caché
         try:
-            await download.save_as(str(temp_path))
-            _save_to_dest(temp_path, output_path)
-            if Path(output_path).exists() and Path(output_path).stat().st_size > 50_000:
+            p = await download.path()
+            if p and Path(p).exists() and Path(p).stat().st_size > 50_000:
+                _save_to_dest(p, output_path)
                 saved = True
-                print(f"  [download] OK: Guardado vía save_as en {output_path}")
-        except Exception as err:
-            print(f"  [download] Aviso: save_as lanzó ({err}); buscando archivo en disco...")
-        finally:
-            temp_path.unlink(missing_ok=True)
+                print(f"  [download] Guardado directo vía download.path() en {output_path}")
+        except Exception:
+            pass
+
+        # 2. Intentar save_as de Playwright
+        if not saved:
+            temp_path = Path(f"{output_path}.download")
+            try:
+                await download.save_as(str(temp_path))
+                _save_to_dest(temp_path, output_path)
+                if Path(output_path).exists() and Path(output_path).stat().st_size > 50_000:
+                    saved = True
+                    print(f"  [download] OK: Guardado vía save_as en {output_path}")
+            except Exception as err:
+                print(f"  [download] Aviso: save_as lanzó ({err}); buscando archivo en disco...")
+            finally:
+                temp_path.unlink(missing_ok=True)
 
     # 3. Rescate por Filesystem (busca en carpeta de perfil y Downloads del usuario)
     if not saved:

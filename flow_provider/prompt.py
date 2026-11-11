@@ -10,8 +10,8 @@ import re
 
 from .browser import get_page
 
-SEL_PROMPT = 'flow-rich-text-editor div[contenteditable="true"], div.ProseMirror[contenteditable="true"], div[contenteditable="true"]'
-SEL_SUBMIT = 'button:has(> :text-is("arrow_forward"))'
+SEL_PROMPT = 'div.ProseMirror[contenteditable="true"], flow-rich-text-editor div[contenteditable="true"], div[contenteditable="true"]'
+SEL_SUBMIT = 'button[type="submit"]:has(mat-icon:text-is("arrow_forward")), button[type="submit"]:has(i:text-is("arrow_forward")), button:has(:is(i, mat-icon):text-is("arrow_forward")), button[aria-label="Iniciar geração"], button[aria-label="Iniciar generación"]'
 
 # Menú @ (interfaz nueva de Flow): popover Radix con buscador por nombre.
 # Validado en scripts/calibrate_mentions3.py — inserta un chip inline en el prompt.
@@ -28,18 +28,23 @@ async def submit_prompt(prompt: str) -> None:
     print(f"    [prompt] Insertando texto del prompt ({len(prompt)} caracteres)...")
     prompt_box = page.locator(SEL_PROMPT).first
     try:
-        await prompt_box.click(position={"x": 30, "y": 15}, force=True)
+        await prompt_box.click()
     except Exception:
         await prompt_box.evaluate("el => el.focus()")
     await page.keyboard.press("Control+a")
     await page.keyboard.press("Delete")
     await page.keyboard.insert_text(prompt)
-    await page.wait_for_timeout(300)
+    await page.keyboard.press("Space")
+    await page.wait_for_timeout(800)
 
     # Click submit
     print("    [prompt] Enviando generación (clic en botón flecha)...")
-    submit_btn = page.locator(SEL_SUBMIT)
-    await submit_btn.first.click()
+    submit_btn = page.locator(SEL_SUBMIT).first
+    for _ in range(10):
+        if not await submit_btn.get_attribute("disabled"):
+            break
+        await page.wait_for_timeout(500)
+    await submit_btn.click()
 
 
 async def submit_segments_with_voice(segments: list[dict], voice: str | None = None,

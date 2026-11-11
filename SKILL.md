@@ -39,6 +39,7 @@ python flow.py login
 | Animar un fotograma | `python flow.py video --prompt "..." --start inicio.png --name nombre` |
 | Interpolar inicio y fin | `python flow.py video --prompt "..." --start inicio.png --end fin.png --name nombre` |
 | Dos o más entregables | Construye un JSON y ejecuta `python flow.py batch archivo.json` |
+| Video corto narrado, duración libre | Construye un roteiro JSON y ejecuta `python flow.py short roteiro.json` (ver `examples/roteiro_casa_praia.json`) |
 
 Opciones: `--ratio` (por defecto `9:16`), `--model`, `--out`, `--name`; video admite `--duration 8s` si el modelo ofrece esa duración. Modelos reconocidos por el proveedor actual: imagen `Nano Banana 2 Lite`, `Nano Banana 2`, `Nano Banana Pro`, `Imagen 4`; video `Veo 3.1 - Lite`, `Veo 3.1 - Fast`, `Veo 3.1 - Quality`, `Omni 1.1 Flash`. La disponibilidad real depende de Flow y de la cuenta.
 
@@ -75,5 +76,19 @@ Ejecuta `python flow.py batch mi_lote.json`. Revisa `outputs/<project>/batch_rep
 ## Límites y mantenimiento
 
 La automatización usa la interfaz web de Flow; cambios en esa interfaz pueden exigir ajustes de selectores. El agente integrado de Flow también genera medios y lotes; esta skill sirve para dirigir Flow desde un agente externo y guardar archivos locales. No presentes la generación como ilimitada o completamente gratuita.
+
+## Pipeline `short` (video narrado de duración libre)
+
+`python flow.py short roteiro.json` produce un MP4 360p de la duración-alvo pedida (ej. `"target_duration": "30s"` o `"3:00"`). El pipeline:
+
+1. Genera clips de ~10s en Flow con el modelo **Omni 1.1 Flash** (fijo), calculando `N = ceil(alvo/10)`; cada clip encadena con el último cuadro del anterior para evitar cortes.
+2. Narra en pt-BR con **edge-tts** (voz `pt-BR-AntonioNeural` por defecto, alternativa `pt-BR-FranciscaNeural`); el audio queda cacheado en `vendor/voices/cache/`.
+3. Monta con **ffmpeg** (embebido en `vendor/bin/`): concatena con crossfade, mezcla la narración sobre el audio ambiente, quema subtítulos `.srt` y exporta 640x360.
+
+Es autossuficiente: el ffmpeg viaja en la carpeta. La primera síntesis de cada texto nuevo requiere internet (edge-tts); las repeticiones usan el cache. Cada clip consume créditos Omni; el comando avisa `N` antes de correr.
+
+### Guardião de política de contenido
+
+Cuando Flow bloquea un prompt, `flow_provider/policy_guard.py` clasifica el motivo y sugiere una **reescrita genuinamente dentro de la política** (menos gráfica, personaje adulto, actividad recreativa supervisada). **Nunca reenvía solo**: requiere aprobación humana y registra el caso en `blocked_prompts.json`. No inyecta pretextos tipo "educativo/cinemático" para burlar la moderación; eso viola los Términos del Google y no funciona.
 
 ⚠️ **ADVERTENCIA:** `python flow.py clean nombre_proyecto` borra ese proyecto local de `outputs/`; `python flow.py clean` borra todos los resultados. No ejecutes limpieza sin una solicitud explícita y un objetivo verificado.

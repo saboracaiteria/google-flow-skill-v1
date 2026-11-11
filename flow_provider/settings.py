@@ -26,3 +26,14 @@ FLOW_CHROME_PROFILE = os.getenv(
 
 # Modo legacy (no se usa): sesion via storage_state JSON.
 FLOW_SESSION_FILE = os.getenv("FLOW_SESSION_FILE", "")
+
+# --- Chrome persistente via CDP -------------------------------------------
+# Cuando esta activo, un Chrome real (con el perfil de session/) queda ABIERTO
+# en una puerta de depuracion y los comandos solo se conectan/desconectan:
+# la ventana ya no se cierra entre ejecuciones (mas rapido y estable).
+FLOW_USE_CDP = os.getenv("FLOW_USE_CDP", "true").lower() == "true"
+FLOW_CDP_PORT = int(os.getenv("FLOW_CDP_PORT", "9223"))
+FLOW_CDP_HOST = os.getenv("FLOW_CDP_HOST", "127.0.0.1")
+FLOW_CDP_URL = os.getenv("FLOW_CDP_URL", f"http://{FLOW_CDP_HOST}:{FLOW_CDP_PORT}")
+# Si no hay Chrome en la puerta al arrancar, lanzar uno destacado automaticamente.
+FLOW_CDP_AUTO_LAUNCH = os.getenv("FLOW_CDP_AUTO_LAUNCH", "true").lower() == "true"
